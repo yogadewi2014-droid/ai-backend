@@ -313,7 +313,7 @@ const response = await openai.chat.completions.create({
   messages: [
     {
       role: "system",
-      content: "Kamu adalah guru AI pintar Indonesia."
+      content: systemPrompt
     },
         {
           role: "user",
