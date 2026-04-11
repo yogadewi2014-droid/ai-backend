@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import CircuitBreaker from "opossum";
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = process.env.PORT || 8080;
@@ -316,7 +317,7 @@ app.post("/chat", async (req, res) => {
           content: message
         }
       ],
-      max_completion_tokens: 200
+      max_completion_tokens: 500
     });
     console.log(JSON.stringify(response, null, 2));
     const reply =
