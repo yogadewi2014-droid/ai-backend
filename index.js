@@ -254,6 +254,43 @@ app.get("/health", async (req, res) => {
   });
 });
 
+// =========================
+// GENERATE JWT TOKEN
+// =========================
+app.post("/token", (req, res) => {
+  try {
+    const { tenantId, userId, plan } = req.body;
+
+    if (!tenantId || !userId || !plan) {
+      return res.status(400).json({
+        error: "tenantId, userId, dan plan wajib diisi"
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        tenantId,
+        userId,
+        plan
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "30d"
+      }
+    );
+
+    res.json({
+      success: true,
+      token
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
 // ==========================
 // START
 // ==========================
