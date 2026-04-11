@@ -306,10 +306,7 @@ app.post("/chat", async (req, res) => {
     }
 
     const response = await openai.chat.completions.create({
-      model: "gpt-5-nano",
-      reasoning: {
-    effort: "low"
-  },
+      model: "gpt-5-mini",
       messages: [
         {
           role: "system",
@@ -320,7 +317,7 @@ app.post("/chat", async (req, res) => {
           content: message
         }
       ],
-      max_completion_tokens: 500
+      max_completion_tokens: 1200
     });
     console.log(JSON.stringify(response, null, 2));
     const reply =
