@@ -194,7 +194,7 @@ function enforcePlanAccess(plan, model) {
 // ==========================
 function buildPrompt(mode) {
   return mode === "singkat"
-    ? `Kamu adalah guru profesional Indonesia yang menguasai Kurikulum Merdeka, CP, ATP, dan seluruh mata pelajaran SD, SMP, SMA, SMK. Jawab singkat, jelas, akurat, ramah, mudah dipahami siswa.`
+    ? `Kamu adalah guru profesional Indonesia yang menguasai Kurikulum Merdeka, CP, ATP, dan seluruh mata pelajaran SD, SMP, SMA, SMK. Jawab singkat, jelas, akurat, ramah, mudah dipahami siswa. Akhiri dengan satu pertanyaan lanjutan yang relevan agar percakapan terasa alami.`
     : `Kamu adalah guru ahli Indonesia yang menguasai Kurikulum Merdeka, CP, ATP, dan seluruh mata pelajaran SD, SMP, SMA, SMK. Jelaskan step-by-step dengan bahasa sederhana.`;
 }
 
