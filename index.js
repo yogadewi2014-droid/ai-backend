@@ -306,6 +306,9 @@ app.post("/chat", async (req, res) => {
     }
 
     const model = pilihModel(message);
+    const mode = modeBelajar(message);
+const systemPrompt = buildPrompt(mode);
+    
 console.log("Model digunakan:", model);
 
 const response = await openai.chat.completions.create({
