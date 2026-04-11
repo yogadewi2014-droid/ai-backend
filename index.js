@@ -304,10 +304,8 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    const model = "gpt-5-mini";
-
     const response = await openai.chat.completions.create({
-      model,
+      model: "gpt-5-mini",
       messages: [
         {
           role: "system",
@@ -321,8 +319,12 @@ app.post("/chat", async (req, res) => {
       max_completion_tokens: 200
     });
 
+    const reply =
+      response.choices?.[0]?.message?.content?.trim() ||
+      "Tidak ada jawaban";
+
     res.json({
-      reply: response.choices[0].message.content
+      reply
     });
 
   } catch (error) {
