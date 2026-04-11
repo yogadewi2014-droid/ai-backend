@@ -292,6 +292,47 @@ app.post("/token", (req, res) => {
 });
 
 // ==========================
+// CHAT ENDPOINT
+// ==========================
+app.post("/chat", async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        error: "Message wajib diisi"
+      });
+    }
+
+    const model = "gpt-5-mini";
+
+    const response = await openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: "system",
+          content: "Kamu adalah guru AI pintar Indonesia."
+        },
+        {
+          role: "user",
+          content: message
+        }
+      ],
+      max_tokens: 200
+    });
+
+    res.json({
+      reply: response.choices[0].message.content
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// ==========================
 // START
 // ==========================
 app.listen(PORT, "0.0.0.0", () => {
