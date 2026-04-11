@@ -305,13 +305,16 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: "Kamu adalah guru AI pintar Indonesia."
-        },
+    const model = pilihModel(message);
+console.log("Model digunakan:", model);
+
+const response = await openai.chat.completions.create({
+  model,
+  messages: [
+    {
+      role: "system",
+      content: "Kamu adalah guru AI pintar Indonesia."
+    },
         {
           role: "user",
           content: message
