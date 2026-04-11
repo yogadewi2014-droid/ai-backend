@@ -307,6 +307,9 @@ app.post("/chat", async (req, res) => {
 
     const response = await openai.chat.completions.create({
       model: "gpt-5-nano",
+      reasoning: {
+    effort: "low"
+  },
       messages: [
         {
           role: "system",
