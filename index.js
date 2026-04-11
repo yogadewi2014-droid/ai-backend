@@ -200,7 +200,7 @@ function buildPrompt(mode) {
 // ==========================
 // OPENAI EXECUTOR
 // ==========================
-async function executeOpenAI({ model, systemPrompt, message, max_tokens }) {
+async function executeOpenAI({ model, systemPrompt, message, max_completion_tokens }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
 
@@ -212,7 +212,7 @@ async function executeOpenAI({ model, systemPrompt, message, max_tokens }) {
           { role: "system", content: systemPrompt },
           { role: "user", content: message },
         ],
-        max_tokens,
+        max_completion_tokens,
       },
       { signal: controller.signal }
     );
