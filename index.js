@@ -318,7 +318,7 @@ app.post("/chat", async (req, res) => {
       ],
       max_completion_tokens: 200
     });
-
+    console.log(JSON.stringify(response, null, 2));
     const reply =
       response.choices?.[0]?.message?.content?.trim() ||
       "Tidak ada jawaban";
