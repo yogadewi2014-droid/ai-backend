@@ -12,8 +12,6 @@ const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const { createClient: createRedisClient } = require('redis');
 const cron = require('node-cron');
-const sharp = require('sharp');
-const stringSimilarity = require('string-similarity');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -184,7 +182,6 @@ async function recordUsage(userId, modelName, costUSD) {
   userData.dailyUsage += costUSD;
   userBudget.set(userId, userData);
   
-  // Log ke Supabase jika ada
   if (supabase) {
     await supabase.from('logs').insert({
       platform: 'cost_tracker',
@@ -222,21 +219,17 @@ function isSimpleQuestion(text) {
 }
 
 function selectModel(level, prompt) {
-  // Pertanyaan simple selalu pakai GPT Mini (termurah)
   if (isSimpleQuestion(prompt)) {
     return { model: 'gptMini', reason: 'simple_question', cost: '~Rp 4' };
   }
   
-  // Math/coding pakai Deepseek
   if (CONFIG.mathKeywords.some(k => prompt.toLowerCase().includes(k))) {
     return { model: 'deepseekV32', reason: 'math_coding', cost: '~Rp 2.300' };
   }
   
-  // Berdasarkan level
   let model = CONFIG.levelModelMap[level] || 'gptMini';
   let costNote = '';
   
-  // Optimasi: Mahasiswa tidak selalu perlu reasoning
   if (level === 'mahasiswa' && prompt.split(' ').length < 30) {
     const reasoningKeywords = ['analisis', 'evaluasi', 'kritik', 'bandingkan', 'mengapa'];
     if (!reasoningKeywords.some(k => prompt.toLowerCase().includes(k))) {
@@ -278,7 +271,7 @@ async function searchWeb(query) {
       link: r.link
     }));
     
-    await setCache(cacheKey, results, 21600); // 6 jam
+    await setCache(cacheKey, results, 21600);
     logger.info(`Search results: ${results.length} for "${query}"`);
     return results;
   } catch (err) {
@@ -335,7 +328,6 @@ async function callWithFallback(modelName, messages) {
     }
   }
   
-  // Semua AI gagal
   return {
     success: true,
     content: "Maaf, saya sedang mengalami gangguan teknis. Silakan coba lagi beberapa saat lagi.",
@@ -432,10 +424,9 @@ async function buildPrompt(userId, platform, level, userMessage, searchResults =
 // ============================================
 async function processChat(userId, platform, level, message, imageUrl = null) {
   const startTime = Date.now();
-  logger.info(`Processing chat: user=${userId}, platform=${platform}, level=${level}`);
+  logger.info(`Processing chat: user=${userId}, platform=${platform}, level=${level}, message=${message.substring(0, 50)}`);
   
   try {
-    // 1. Cache check
     const cacheKey = `chat:${level}:${message}`;
     const cached = await getCache(cacheKey);
     if (cached) {
@@ -443,7 +434,6 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
       return cached;
     }
     
-    // 2. Search if needed
     let searchResults = null;
     const needsSearch = CONFIG.searchKeywords.some(k => message.toLowerCase().includes(k));
     if (needsSearch) {
@@ -451,11 +441,9 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
       searchResults = await searchWeb(message);
     }
     
-    // 3. Pilih model dengan cost optimization
     const { model: selectedModel, reason, costNote } = selectModel(level, message);
     logger.info(`📊 Model: ${selectedModel} (${reason}) ${costNote || ''}`);
     
-    // 4. Budget check
     const estimatedCost = estimateCost(selectedModel, message.length / 4);
     const budgetOk = await checkBudget(userId, estimatedCost);
     if (!budgetOk.allowed) {
@@ -468,21 +456,15 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
       };
     }
     
-    // 5. Build prompt
     const messages = await buildPrompt(userId, platform, level, message, searchResults);
-    
-    // 6. Call AI
     const result = await callWithFallback(selectedModel, messages);
     
-    // 7. Save to database
     await saveChatMessage(userId, platform, 'user', message, selectedModel);
     await saveChatMessage(userId, platform, 'assistant', result.content, result.model);
     
-    // 8. Record usage
     const actualCost = estimateCost(result.model, message.length / 4, result.content.length / 4);
     await recordUsage(userId, result.model, actualCost);
     
-    // 9. Save to cache
     await setCache(cacheKey, result, 3600);
     
     const duration = Date.now() - startTime;
@@ -502,10 +484,13 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
 }
 
 // ============================================
-// TELEGRAM HANDLER
+// TELEGRAM HANDLER (YANG DIPERBAIKI)
 // ============================================
 async function sendTelegramMessage(chatId, text) {
-  if (!CONFIG.telegram.token) return;
+  if (!CONFIG.telegram.token) {
+    logger.warn('Telegram token not configured');
+    return false;
+  }
   
   try {
     await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
@@ -513,51 +498,71 @@ async function sendTelegramMessage(chatId, text) {
       text: text.substring(0, 4096),
       parse_mode: 'HTML'
     });
+    return true;
   } catch (err) {
-    logger.error('Telegram send error:', err);
+    logger.error('Telegram send error:', err.response?.data || err.message);
+    return false;
   }
 }
 
 app.post('/webhook/telegram', async (req, res) => {
-  const update = req.body;
-  if (!update.message || !update.message.text) {
-    return res.sendStatus(200);
-  }
+  // 🔴 KRITICAL: Kirim response 200 OK dulu ke Telegram
+  res.status(200).send('OK');
   
-  const chatId = update.message.chat.id;
-  const userId = update.message.from.id.toString();
-  const text = update.message.text;
-  
-  // Handle commands
-  if (text.startsWith('/')) {
-    const cmd = text.split(' ')[0];
-    if (cmd === '/start') {
-      await sendTelegramMessage(chatId, '🤖 Selamat datang di AI Learning Assistant!\n\nKirimkan pertanyaan atau foto soal untuk belajar.\n\nGunakan:\n/level_sd - Level SD/SMP\n/level_sma - Level SMA\n/level_mahasiswa - Level Mahasiswa\n/level_dosen - Level Dosen/Politikus\n/reset - Reset riwayat');
-    } else if (cmd === '/help') {
-      await sendTelegramMessage(chatId, '📚 Perintah yang tersedia:\n/level_sd - Mode SD/SMP (GPT Mini)\n/level_sma - Mode SMA (Deepseek V32)\n/level_mahasiswa - Mode Mahasiswa (Deepseek Reasoning)\n/level_dosen - Mode Dosen (GPT-5)\n/reset - Reset riwayat chat');
-    } else if (cmd === '/reset') {
-      await sendTelegramMessage(chatId, '✅ Riwayat chat Anda telah direset.');
+  // Proses pesan setelah response terkirim
+  try {
+    const update = req.body;
+    
+    // Validasi update
+    if (!update || !update.message) {
+      logger.info('Telegram webhook: No message in update');
+      return;
     }
-    return res.sendStatus(200);
+    
+    const chatId = update.message.chat.id;
+    const userId = update.message.from.id.toString();
+    const text = update.message.text;
+    const userName = update.message.from.first_name || update.message.from.username;
+    
+    logger.info(`📨 Telegram message from @${userName} (${chatId}): ${text}`);
+    
+    // Handle commands
+    if (text && text.startsWith('/')) {
+      const cmd = text.split(' ')[0];
+      if (cmd === '/start') {
+        await sendTelegramMessage(chatId, '🤖 Selamat datang di AI Learning Assistant!\n\nKirimkan pertanyaan atau foto soal untuk belajar.\n\nGunakan:\n/level_sd - Level SD/SMP\n/level_sma - Level SMA\n/level_mahasiswa - Level Mahasiswa\n/level_dosen - Level Dosen/Politikus\n/reset - Reset riwayat');
+      } else if (cmd === '/help') {
+        await sendTelegramMessage(chatId, '📚 Perintah yang tersedia:\n/level_sd - Mode SD/SMP (GPT Mini)\n/level_sma - Mode SMA (Deepseek V32)\n/level_mahasiswa - Mode Mahasiswa (Deepseek Reasoning)\n/level_dosen - Mode Dosen (GPT-5)\n/reset - Reset riwayat chat');
+      } else if (cmd === '/reset') {
+        await sendTelegramMessage(chatId, '✅ Riwayat chat Anda telah direset.');
+      }
+      return;
+    }
+    
+    // Kirim typing indicator
+    try {
+      await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, {
+        chat_id: chatId,
+        action: 'typing'
+      });
+    } catch (err) {
+      // Ignore typing error
+    }
+    
+    // Proses chat dengan level default atau dari command sebelumnya
+    let level = 'sma'; // default level
+    
+    // Proses pesan
+    const result = await processChat(userId, 'telegram', level, text);
+    
+    // Kirim balasan
+    await sendTelegramMessage(chatId, result.content);
+    
+    logger.info(`✅ Response sent to @${userName}`);
+    
+  } catch (error) {
+    logger.error('Telegram webhook error:', error);
   }
-  
-  // Detect level dari pesan
-  let level = 'sma';
-  if (text.includes('/level_sd')) level = 'sd_smp';
-  else if (text.includes('/level_sma')) level = 'sma';
-  else if (text.includes('/level_mahasiswa')) level = 'mahasiswa';
-  else if (text.includes('/level_dosen')) level = 'dosen_politikus';
-  
-  // Kirim typing indicator
-  await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, {
-    chat_id: chatId,
-    action: 'typing'
-  }).catch(() => {});
-  
-  const result = await processChat(userId, 'telegram', level, text);
-  await sendTelegramMessage(chatId, result.content);
-  
-  res.sendStatus(200);
 });
 
 // ============================================
@@ -604,7 +609,6 @@ cron.schedule('0 * * * *', async () => {
     logger.info('✅ Old logs cleaned');
   }
   
-  // Clear memory cache yang expired
   const now = Date.now();
   for (const [key, value] of memoryCache) {
     if (value.expiry < now) {
@@ -647,13 +651,6 @@ app.listen(PORT, () => {
 ║     POST /api/chat        - Website/API Chat                 ║
 ║     POST /webhook/telegram - Telegram Bot Webhook            ║
 ║     GET  /api/health      - Health Check                     ║
-╠══════════════════════════════════════════════════════════════╣
-║  💰 Biaya per chat (dengan optimasi):                        ║
-║     SD-SMP biasa    : Rp 4                                   ║
-║     SD-SMP math     : Rp 2.300                               ║
-║     SMA             : Rp 2.300                               ║
-║     Mahasiswa       : Rp 230 (90% hemat!)                    ║
-║     Dosen/Politikus : Rp 211                                 ║
 ╚══════════════════════════════════════════════════════════════╝
   `);
 });
