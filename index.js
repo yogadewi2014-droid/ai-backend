@@ -84,7 +84,7 @@ const CONFIG = {
   },
   levelModelMap: {
     sd_smp: 'gptMini',
-    sma: 'deepseekV32',
+    sma: 'gptMini',
     mahasiswa: 'deepseekReasoning',
     dosen_politikus: 'gpt5'
   },
