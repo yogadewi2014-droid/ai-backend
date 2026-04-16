@@ -338,23 +338,46 @@ async function searchWeb(query) {
 // ============================================
 async function processImageInput(imageUrl, userQuestion, targetModel, level) {
   try {
-    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    console.log(`🖼️ [OCR] Download gambar dari: ${imageUrl}`);
+    
+    // Tambahkan headers untuk akses file Telegram
+    const imageResponse = await axios.get(imageUrl, { 
+      responseType: 'arraybuffer', 
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    console.log(`🖼️ [OCR] Gambar terdownload, size: ${imageResponse.data.length} bytes`);
     const base64Image = Buffer.from(imageResponse.data).toString('base64');
+    
     const ocrMessages = [
       { role: 'system', content: 'Anda adalah OCR. Ekstrak teks dari gambar ini. Jika ada soal matematika, tulis dalam format LaTeX.' },
-      { role: 'user', content: [{ type: 'text', text: userQuestion || 'Ekstrak teks dari gambar ini:' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] }
+      { role: 'user', content: [
+        { type: 'text', text: userQuestion || 'Ekstrak teks dari gambar ini:' },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+      ] }
     ];
+    
+    console.log(`🖼️ [OCR] Kirim ke GPT Mini untuk OCR...`);
     const ocrResult = await callAI('gptMini', ocrMessages, 'sd_smp');
     if (!ocrResult.success) return { success: false, error: 'Gagal membaca gambar' };
+    
+    console.log(`🖼️ [OCR] Hasil OCR: ${ocrResult.content.substring(0, 100)}...`);
+    
     const finalMessages = [
       { role: 'system', content: `Analisis gambar: ${ocrResult.content}. Jawab pertanyaan user.` },
       { role: 'user', content: userQuestion || 'Jelaskan gambar ini.' }
     ];
+    
     const finalResult = await callAI(targetModel, finalMessages, level);
     return { success: true, content: finalResult.content };
-  } catch (err) { return { success: false, error: err.message }; }
+  } catch (err) { 
+    console.error(`🖼️ [OCR] ERROR: ${err.message}`);
+    return { success: false, error: err.message }; 
+  }
 }
-
 // ============================================
 // ACADEMIC WRITING
 // ============================================
