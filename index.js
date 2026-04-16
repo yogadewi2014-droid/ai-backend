@@ -1,6 +1,7 @@
 // ============================================
 // AI LEARNING BACKEND v3.0 - MULTI PLATFORM
 // Identitas: YENNI - Sahabat AI Anda
+// OPTIMASI: Novita OCR + Browserless PDF + Batasan per Level
 // ============================================
 
 require('dotenv').config();
@@ -9,12 +10,13 @@ const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const { createClient: createRedisClient } = require('redis');
 const cron = require('node-cron');
+const puppeteer = require('puppeteer-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // ============================================
 // SALAM SEMUA AGAMA
@@ -69,6 +71,14 @@ const CONFIG = {
       pricePer1KInput: 0.0025,
       pricePer1KOutput: 0.01,
       timeout: 60000
+    },
+    novitaOCR: {
+      url: 'https://api.novita.ai/v3/openai/v1/chat/completions',
+      key: process.env.NOVITA_API_KEY,
+      model: 'deepseek/deepseek-ocr-2',
+      pricePer1KInput: 0.00003,
+      pricePer1KOutput: 0.00003,
+      timeout: 60000
     }
   },
   serper: {
@@ -83,19 +93,19 @@ const CONFIG = {
     token: process.env.TELEGRAM_BOT_TOKEN
   },
   levelModelMap: {
-    sd_smp: 'gptMini',
-    sma: 'gptMini',
+    sd_smp: 'deepseekV32',
+    sma: 'deepseekV32',
     mahasiswa: 'deepseekReasoning',
     dosen_politikus: 'gpt5'
   },
   levelNames: {
-    sd_smp: 'SD/SMP (GPT Mini)',
+    sd_smp: 'SD/SMP (Deepseek V32)',
     sma: 'SMA (Deepseek V32)',
     mahasiswa: 'Mahasiswa (Deepseek Reasoning)',
     dosen_politikus: 'Dosen/Politikus (GPT-5)'
   },
   levelPrices: {
-    sd_smp: '~Rp 4/chat ⚡ cepat',
+    sd_smp: '~Rp 2.300/chat',
     sma: '~Rp 2.300/chat',
     mahasiswa: '~Rp 2.300/chat',
     dosen_politikus: '~Rp 211/chat'
@@ -106,15 +116,21 @@ const CONFIG = {
     gptMini: ['deepseekV32', 'gpt5'],
     deepseekV32: ['gpt5', 'gptMini'],
     deepseekReasoning: ['gpt5', 'deepseekV32'],
-    gpt5: ['gptMini', 'deepseekReasoning']
+    gpt5: ['deepseekReasoning', 'deepseekV32']
+  },
+  // BATASAN OCR PER LEVEL (ANTI TEKOR)
+  ocrLimits: {
+    sd_smp: { maxPages: 5, maxSizeMB: 5 },
+    sma: { maxPages: 5, maxSizeMB: 5 },
+    mahasiswa: { maxPages: 10, maxSizeMB: 15 },
+    dosen_politikus: { maxPages: 20, maxSizeMB: 10 }
   }
 };
 
 // ============================================
-// KONFIGURASI GAMBAR & OUTPUT
+// KONFIGURASI TAMBAHAN
 // ============================================
 const IMAGE_CONFIG = {
-  googleImagenApiKey: process.env.GOOGLE_IMAGEN_API_KEY,
   latexRendererUrl: process.env.LATEX_RENDERER_URL || 'https://latex.railway.app/render'
 };
 
@@ -334,50 +350,156 @@ async function searchWeb(query) {
 }
 
 // ============================================
-// INPUT GAMBAR (OCR)
+// GENERATE PDF DENGAN BROWSERLESS
 // ============================================
-async function processImageInput(imageUrl, userQuestion, targetModel, level) {
+const BROWSER_WS_ENDPOINT = process.env.BROWSER_WS_ENDPOINT;
+
+async function generatePDFWithBrowserless(htmlContent, title) {
+  if (!BROWSER_WS_ENDPOINT) {
+    return { success: false, error: 'BROWSER_WS_ENDPOINT not configured' };
+  }
+  
+  let browser = null;
   try {
-    console.log(`🖼️ [OCR] Download gambar dari: ${imageUrl}`);
+    browser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS_ENDPOINT });
+    const page = await browser.newPage();
     
-    // Tambahkan headers untuk akses file Telegram
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>${title}</title>
+        <style>
+          body { font-family: 'Arial', sans-serif; padding: 40px; line-height: 1.6; max-width: 800px; margin: 0 auto; }
+          h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+          h2 { color: #34495e; margin-top: 25px; }
+          pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+          code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+          table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background: #f2f2f2; }
+        </style>
+      </head>
+      <body>${htmlContent}</body>
+      </html>
+    `;
+    
+    await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
+    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' } });
+    await page.close();
+    return { success: true, buffer: pdfBuffer };
+    
+  } catch (err) {
+    console.error('Browserless PDF error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+async function generatePdf(content, title = 'Document') {
+  let htmlContent = content
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/\n/g, '<br>')
+    .replace(/^# (.*?)$/gm, '<h1>$1</h1>')
+    .replace(/^## (.*?)$/gm, '<h2>$1</h2>');
+  
+  const result = await generatePDFWithBrowserless(htmlContent, title);
+  if (result.success) {
+    return { success: true, buffer: result.buffer };
+  }
+  return { success: false, error: result.error };
+}
+
+async function generateDocx(content, title = 'Document') {
+  return { success: false, error: 'DOCX generation not available, use PDF format' };
+}
+
+// ============================================
+// OCR DENGAN NOVITA AI (MURAH!) + BATASAN PER LEVEL
+// ============================================
+async function processImageInput(imageUrl, userQuestion, targetModel, level, isPDF = false, pageCount = 1) {
+  const limit = CONFIG.ocrLimits[level] || CONFIG.ocrLimits.sma;
+  const maxPages = limit.maxPages;
+  const maxSizeMB = limit.maxSizeMB;
+  
+  if (isPDF && pageCount > maxPages) {
+    return {
+      success: false,
+      content: `❌ *PDF terlalu banyak halaman!*\n\n📄 ${pageCount} halaman (melebihi batas level ${level}: ${maxPages} halaman)\n\n💡 *Solusi:* Pecah PDF atau naikkan level ke Mahasiswa/Dosen.`,
+      model: 'system',
+      isFallback: true
+    };
+  }
+  
+  if (!process.env.NOVITA_API_KEY) {
+    return {
+      success: false,
+      content: `⚠️ *OCR tidak tersedia saat ini*`,
+      model: 'system',
+      isFallback: true
+    };
+  }
+  
+  try {
+    console.log(`🖼️ [OCR] Level: ${level}, Batas: ${maxPages} halaman / ${maxSizeMB}MB`);
+    
     const imageResponse = await axios.get(imageUrl, { 
       responseType: 'arraybuffer', 
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+      timeout: 30000,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
     
-    console.log(`🖼️ [OCR] Gambar terdownload, size: ${imageResponse.data.length} bytes`);
-    const base64Image = Buffer.from(imageResponse.data).toString('base64');
+    const actualSizeMB = imageResponse.data.length / (1024 * 1024);
+    if (actualSizeMB > maxSizeMB) {
+      return {
+        success: false,
+        content: `❌ *File terlalu besar!*\n\n📦 Ukuran: ${actualSizeMB.toFixed(1)}MB (melebihi batas level ${level}: ${maxSizeMB}MB)`,
+        model: 'system',
+        isFallback: true
+      };
+    }
     
-    const ocrMessages = [
-      { role: 'system', content: 'Anda adalah OCR. Ekstrak teks dari gambar ini. Jika ada soal matematika, tulis dalam format LaTeX.' },
-      { role: 'user', content: [
-        { type: 'text', text: userQuestion || 'Ekstrak teks dari gambar ini:' },
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-      ] }
-    ];
+    const base64File = Buffer.from(imageResponse.data).toString('base64');
+    const mimeType = isPDF ? 'application/pdf' : 'image/jpeg';
     
-    console.log(`🖼️ [OCR] Kirim ke GPT Mini untuk OCR...`);
-    const ocrResult = await callAI('gptMini', ocrMessages, 'sd_smp');
-    if (!ocrResult.success) return { success: false, error: 'Gagal membaca gambar' };
+    const response = await axios.post(
+      'https://api.novita.ai/v3/openai/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-ocr-2',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64File}` } },
+            { type: 'text', text: userQuestion || (isPDF ? 'Ekstrak semua teks dari PDF ini. Output dalam format markdown.' : 'Ekstrak semua teks dari gambar ini.') }
+          ]
+        }],
+        max_tokens: 4096,
+        temperature: 0
+      },
+      {
+        headers: { 'Authorization': `Bearer ${process.env.NOVITA_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 90000
+      }
+    );
     
-    console.log(`🖼️ [OCR] Hasil OCR: ${ocrResult.content.substring(0, 100)}...`);
+    const ocrResult = response.data.choices[0].message.content;
+    console.log(`🖼️ [OCR] Novita AI berhasil!`);
     
     const finalMessages = [
-      { role: 'system', content: `Analisis gambar: ${ocrResult.content}. Jawab pertanyaan user.` },
-      { role: 'user', content: userQuestion || 'Jelaskan gambar ini.' }
+      { role: 'system', content: `Analisis ${isPDF ? 'PDF' : 'gambar'}: ${ocrResult.substring(0, 3000)}. Jawab pertanyaan user.` },
+      { role: 'user', content: userQuestion || (isPDF ? 'Ringkaskan isi PDF ini.' : 'Jelaskan gambar ini.') }
     ];
     
     const finalResult = await callAI(targetModel, finalMessages, level);
     return { success: true, content: finalResult.content };
-  } catch (err) { 
+    
+  } catch (err) {
     console.error(`🖼️ [OCR] ERROR: ${err.message}`);
-    return { success: false, error: err.message }; 
+    return { success: false, content: `❌ Gagal memproses: ${err.message}`, model: 'system', isFallback: true };
   }
 }
+
 // ============================================
 // ACADEMIC WRITING
 // ============================================
@@ -395,19 +517,18 @@ function askForAcademicDetails(level, originalMessage) {
 }
 async function askOutputFormat(userId, content, model, level) {
   pendingOutputRequests.set(userId, { content, model, level });
-  return `✅ *Konten selesai!*\n\nPilih format:\n/format_text - Teks\n/format_pdf - PDF\n/format_docx - DOCX`;
+  return `✅ *Konten selesai!*\n\nPilih format:\n/format_text - Teks\n/format_pdf - PDF`;
 }
-async function generatePdf(content, title = 'Document') {
-  try {
-    const response = await axios.post('https://api.pdf.co/v1/pdf/convert/from/html', { html: `<html><body><h1>${title}</h1>${content.replace(/\n/g,'<br>')}</body></html>`, name: `${title}.pdf` }, { headers: { 'x-api-key': process.env.PDF_CO_API_KEY }, timeout: 30000 });
-    return { success: true, url: response.data.url };
-  } catch (err) { return { success: false, error: err.message }; }
+async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
+  if (!supabase) return;
+  try { await supabase.from('chat_history').insert({ user_id: userId, platform, role, content, model_used: modelUsed, created_at: new Date() }); }
+  catch(e) { logger.error('Save error:', e.message); }
 }
-async function generateDocx(content, title = 'Document') {
-  try {
-    const response = await axios.post('https://api.pdf.co/v1/docx/convert/from/html', { html: `<html><body><h1>${title}</h1>${content.replace(/\n/g,'<br>')}</body></html>`, name: `${title}.docx` }, { headers: { 'x-api-key': process.env.PDF_CO_API_KEY }, timeout: 30000 });
-    return { success: true, url: response.data.url };
-  } catch (err) { return { success: false, error: err.message }; }
+async function getChatHistory(userId, platform, limit = 10) {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('chat_history').select('role, content').eq('user_id', userId).eq('platform', platform).order('created_at', { ascending: false }).limit(limit);
+  if (error) return [];
+  return (data || []).reverse();
 }
 
 // ============================================
@@ -431,34 +552,22 @@ async function callWithFallback(modelName, messages, level, isArticle = false) {
     const result = await callAI(attempt, messages, level, null, isArticle);
     if (result.success) { if (attempt !== modelName) logger.warn(`Fallback: ${modelName} → ${attempt}`); return result; }
   }
-  return { success: true, content: "Maaf, layanan sedang sibuk.", model: 'system' };
-}
-
-async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
-  if (!supabase) return;
-  try { await supabase.from('chat_history').insert({ user_id: userId, platform, role, content, model_used: modelUsed, created_at: new Date() }); }
-  catch(e) { logger.error('Save error:', e.message); }
-}
-async function getChatHistory(userId, platform, limit = 10) {
-  if (!supabase) return [];
-  const { data, error } = await supabase.from('chat_history').select('role, content').eq('user_id', userId).eq('platform', platform).order('created_at', { ascending: false }).limit(limit);
-  if (error) return [];
-  return (data || []).reverse();
+  return { success: true, content: "Maaf, layanan sedang sibuk. Silakan coba lagi nanti.", model: 'system', isFallback: true };
 }
 
 // ============================================
 // PROSES CHAT UTAMA
 // ============================================
-async function processChat(userId, platform, level, message, imageUrl = null) {
+async function processChat(userId, platform, level, message, imageUrl = null, isPDF = false, pageCount = 1) {
   const startTime = Date.now();
   let result = null;
   logger.info(`Processing: ${userId}, ${platform}, ${level}, ${message.substring(0, 50)}`);
   
   if (imageUrl) {
-    let targetModel = level === 'sd_smp' ? 'gptMini' : (level === 'sma' ? 'deepseekV32' : (level === 'mahasiswa' ? 'deepseekReasoning' : 'gpt5'));
-    const imageResult = await processImageInput(imageUrl, message, targetModel, level);
+    let targetModel = level === 'sd_smp' ? 'deepseekV32' : (level === 'sma' ? 'deepseekV32' : (level === 'mahasiswa' ? 'deepseekReasoning' : 'gpt5'));
+    const imageResult = await processImageInput(imageUrl, message, targetModel, level, isPDF, pageCount);
     if (imageResult.success) return { success: true, content: imageResult.content, model: targetModel };
-    return { success: true, content: `Gagal proses gambar: ${imageResult.error}`, model: 'system' };
+    return { success: true, content: imageResult.content, model: 'system', isFallback: true };
   }
   
   const greetingResponse = getGreetingResponse(message, level);
@@ -490,13 +599,36 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
     }
   }
   
-  if (message.startsWith('/format_')) {
+    if (message.startsWith('/format_')) {
     const format = message.replace('/format_', '').toLowerCase();
     const outputData = pendingOutputRequests.get(userId);
     if (!outputData) return { success: true, content: "Tidak ada konten. Buat artikel dulu.", model: 'system' };
-    if (format === 'text') { pendingOutputRequests.delete(userId); return { success: true, content: outputData.content, model: outputData.model }; }
-    if (format === 'pdf') { const pdf = await generatePdf(outputData.content); pendingOutputRequests.delete(userId); return { success: true, content: pdf.success ? `📄 PDF: ${pdf.url}` : `Gagal: ${pdf.error}`, model: outputData.model }; }
-    if (format === 'docx') { const docx = await generateDocx(outputData.content); pendingOutputRequests.delete(userId); return { success: true, content: docx.success ? `📝 DOCX: ${docx.url}` : `Gagal: ${docx.error}`, model: outputData.model }; }
+    
+    if (format === 'text') { 
+      pendingOutputRequests.delete(userId); 
+      return { success: true, content: outputData.content, model: outputData.model }; 
+    }
+    
+    if (format === 'pdf') { 
+      const pdf = await generatePdf(outputData.content, 'Yenni_Article');
+      pendingOutputRequests.delete(userId);
+      
+      if (pdf.success && pdf.buffer) {
+        // Kirim file ke Telegram
+        const FormData = require('form-data');
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        formData.append('document', pdf.buffer, { filename: 'article.pdf' });
+        await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendDocument`, formData, {
+          headers: { ...formData.getHeaders() }
+        });
+        return { success: true, content: '📄 PDF telah dikirim di atas.', model: outputData.model };
+      } else {
+        return { success: true, content: `Gagal buat PDF: ${pdf.error}`, model: 'system' };
+      }
+    }
+    
+    return { success: true, content: 'Format tidak dikenal. Gunakan /format_text atau /format_pdf', model: 'system' };
   }
   
   try {
@@ -505,26 +637,40 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
     if (cached) return cached;
     
     let searchResults = null;
-    if (CONFIG.searchKeywords.some(k => message.toLowerCase().includes(k))) searchResults = await searchWeb(message);
+    if (CONFIG.searchKeywords.some(k => message.toLowerCase().includes(k))) {
+      searchResults = await searchWeb(message);
+    }
+    
     const { model: selectedModel } = selectModel(level);
-    const history = await getChatHistory(userId, platform, 10);
+    const history = await getChatHistory(userId, platform, 5);
     const systemPrompt = await buildSystemPrompt(level, userId, message);
     const messages = [{ role: 'system', content: systemPrompt }];
-    for (const h of history) messages.push({ role: h.role, content: h.content });
+    
+    const limitedHistory = history.slice(-5);
+    for (const h of limitedHistory) messages.push({ role: h.role, content: h.content.substring(0, 500) });
+    
     let finalMessage = message;
-    if (searchResults?.length) finalMessage += `\n\n[Hasil pencarian]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
+    if (searchResults?.length) {
+      finalMessage += `\n\n[Hasil pencarian]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
+    }
     messages.push({ role: 'user', content: finalMessage });
-    const isArticle = (level === 'sd_smp' || level === 'sma') && (message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan'));
+    
+    const isArticle = (level === 'sd_smp' || level === 'sma') && 
+      (message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan'));
+    
     result = await callWithFallback(selectedModel, messages, level, isArticle);
-    await saveChatMessage(userId, platform, 'user', message, selectedModel);
-    await saveChatMessage(userId, platform, 'assistant', result.content, result.model);
+    
+    if (message.length > 3 && result.content.length > 10) {
+      await saveChatMessage(userId, platform, 'user', message.substring(0, 500), selectedModel);
+      await saveChatMessage(userId, platform, 'assistant', result.content.substring(0, 1000), result.model);
+    }
+    
     await setCache(cacheKey, result, 3600);
-    await updateSummaryCache(userId, `Q: ${message.substring(0,100)}...\nA: ${result.content.substring(0,100)}...`, platform);
     logger.info(`✅ Completed in ${Date.now() - startTime}ms`);
     return result;
   } catch (error) {
     logger.error('Process error:', error);
-    return result || { success: true, content: "Maaf, terjadi kesalahan.", model: 'system' };
+    return result || { success: true, content: "Maaf, terjadi kesalahan. Silakan coba lagi.", model: 'system' };
   }
 }
 
@@ -533,11 +679,23 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
 // ============================================
 async function sendTelegramMessage(chatId, text) {
   if (!CONFIG.telegram.token) return;
-  try { await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, { chat_id: chatId, text: text.substring(0,4096), parse_mode: 'Markdown' }); } catch(e) {}
+  try { 
+    await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, { 
+      chat_id: chatId, 
+      text: text.substring(0, 4096), 
+      parse_mode: 'Markdown' 
+    }); 
+  } catch(e) {}
 }
+
 async function sendTelegramTyping(chatId) {
   if (!CONFIG.telegram.token) return;
-  try { await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, { chat_id: chatId, action: 'typing' }); } catch(e) {}
+  try { 
+    await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, { 
+      chat_id: chatId, 
+      action: 'typing' 
+    }); 
+  } catch(e) {}
 }
 
 app.post('/webhook/telegram', async (req, res) => {
@@ -546,47 +704,78 @@ app.post('/webhook/telegram', async (req, res) => {
     const update = req.body;
     if (!update?.message) return;
     
-    // ========== LOG UNTUK DEBUG ==========
-    console.log(`📨 [WEBHOOK] Pesan dari ${update.message.from.id}: "${update.message.text || '[GAMBAR]'}"`);
-    
     const chatId = update.message.chat.id;
     const userId = update.message.from.id.toString();
     const text = update.message.text || '';
     const platform = 'telegram';
     let imageUrl = null;
+    let isPDF = false;
+    let pageCount = 1;
     
-    // ========== LOG DETEKSI GAMBAR ==========
-    console.log(`📸 [DEBUG] Cek foto: ada? ${!!update.message.photo}, jumlah: ${update.message.photo?.length || 0}`);
-    
+    // DETEKSI GAMBAR
     if (update.message.photo && update.message.photo.length > 0) {
-      console.log(`📸 GAMBAR DETEKSI! Jumlah foto: ${update.message.photo.length}`);
-      const photo = update.message.photo[update.message.photo.length-1];
+      const photo = update.message.photo[update.message.photo.length - 1];
       const fileInfo = await axios.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getFile?file_id=${photo.file_id}`);
       imageUrl = `https://api.telegram.org/file/bot${CONFIG.telegram.token}/${fileInfo.data.result.file_path}`;
-      console.log(`📸 URL GAMBAR: ${imageUrl}`);
-    } else {
-      console.log(`📸 TIDAK ADA GAMBAR - teks: "${text.substring(0, 50)}"`);
+      console.log(`📸 GAMBAR DETEKSI!`);
     }
+    
+    // DETEKSI PDF
+    if (update.message.document && update.message.document.mime_type === 'application/pdf') {
+      isPDF = true;
+      const fileId = update.message.document.file_id;
+      const fileInfo = await axios.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getFile?file_id=${fileId}`);
+      imageUrl = `https://api.telegram.org/file/bot${CONFIG.telegram.token}/${fileInfo.data.result.file_path}`;
+      
+      const fileSize = update.message.document.file_size || 0;
+      pageCount = Math.ceil(fileSize / (50 * 1024));
+      pageCount = Math.min(pageCount, 100);
+      
+      const userLevel = await getUserLevel(userId, platform);
+      const limit = CONFIG.ocrLimits[userLevel] || CONFIG.ocrLimits.sma;
+      
+      console.log(`📄 PDF DETEKSI! Level: ${userLevel}, Halaman: ~${pageCount}, Batas: ${limit.maxPages}`);
+      
+      if (pageCount > limit.maxPages) {
+        await sendTelegramMessage(chatId, `⚠️ *Perhatian!*\n\nLevel Anda: *${CONFIG.levelNames[userLevel]}*\n📄 PDF: ~${pageCount} halaman\n🚫 Batas: ${limit.maxPages} halaman\n\n💡 *Solusi:* Naikkan level atau kirim screenshot.`);
+        return;
+      }
+    }
+    
+    // COMMAND HANDLER
     if (text.startsWith('/')) {
       const cmd = text.split(' ')[0].toLowerCase();
-      if (cmd === '/start') { await sendTelegramMessage(chatId, getLevelInfoText()); return; }
+      if (cmd === '/start') { 
+        await sendTelegramMessage(chatId, getLevelInfoText()); 
+        return; 
+      }
+      
       let level = null;
       if (cmd === '/level_sd' || cmd === '/levelsdsmp') level = 'sd_smp';
       else if (cmd === '/level_sma' || cmd === '/levelsma') level = 'sma';
       else if (cmd === '/level_mahasiswa' || cmd === '/levelmahasiswa') level = 'mahasiswa';
       else if (cmd === '/level_dosen' || cmd === '/leveldosen') level = 'dosen_politikus';
-      if (level) { await setUserLevel(userId, platform, level); await setUserChosenLevel(userId, platform, true); await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - ${CONFIG.levelPrices[level]}\nSekarang kirim pertanyaan!`); return; }
+      
+      if (level) { 
+        await setUserLevel(userId, platform, level); 
+        await setUserChosenLevel(userId, platform, true); 
+        await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - ${CONFIG.levelPrices[level]}\nSekarang kirim pertanyaan!`); 
+        return; 
+      }
+      
       await sendTelegramMessage(chatId, 'Perintah tidak dikenal. Gunakan /start');
       return;
     }
-        if (!await hasUserChosenLevel(userId, platform)) {
+    
+    if (!await hasUserChosenLevel(userId, platform)) {
       await sendTelegramMessage(chatId, getLevelInfoText());
       return;
     }
     
     const userLevel = await getUserLevel(userId, platform);
     await sendTelegramTyping(chatId);
-    const result = await processChat(userId, platform, userLevel, text, imageUrl);
+    
+    const result = await processChat(userId, platform, userLevel, text, imageUrl, isPDF, pageCount);
     await sendTelegramMessage(chatId, result.content);
     
   } catch (err) {
@@ -626,7 +815,7 @@ app.post('/api/level', async (req, res) => {
 });
 
 app.post('/api/chat', async (req, res) => {
-  const { message, userId, level, platform = 'website', imageUrl } = req.body;
+  const { message, userId, level, platform = 'website', imageUrl, isPDF, pageCount } = req.body;
   if (!message || !userId) return res.status(400).json({ error: 'message dan userId required' });
   
   let userLevel = level;
@@ -637,20 +826,20 @@ app.post('/api/chat', async (req, res) => {
     userLevel = await getUserLevel(userId, platform);
   }
   
-  const result = await processChat(userId, platform, userLevel, message, imageUrl);
+  const result = await processChat(userId, platform, userLevel, message, imageUrl, isPDF, pageCount);
   res.json({ reply: result.content, model: result.model });
 });
 
 // ============================================
-// GENERATE GAMBAR (Google Gemini Free Tier)
+// GENERATE GAMBAR (via Gemini)
 // ============================================
 app.post('/api/generate-image', async (req, res) => {
-  const { prompt, aspectRatio = '1:1' } = req.body;
+  const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: 'prompt required' });
   
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'Gemini API key not configured. Get free key from https://aistudio.google.com/' });
+    return res.status(500).json({ error: 'Gemini API key not configured' });
   }
   
   try {
@@ -659,9 +848,8 @@ app.post('/api/generate-image', async (req, res) => {
       { contents: [{ parts: [{ text: `Generate a detailed image prompt for: ${prompt}. Return only the prompt text.` }] }] }
     );
     const enhancedPrompt = response.data.candidates?.[0]?.content?.parts?.[0]?.text || prompt;
-    res.json({ success: true, enhancedPrompt: enhancedPrompt, message: 'Gunakan prompt ini di DALL-E atau Midjourney untuk generate gambar.' });
+    res.json({ success: true, enhancedPrompt: enhancedPrompt });
   } catch (err) {
-    logger.error('Gemini error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -673,7 +861,7 @@ app.post('/api/render-latex', async (req, res) => {
   const { latex } = req.body;
   if (!latex) return res.status(400).json({ error: 'latex required' });
   try {
-    const response = await axios.post(IMAGE_CONFIG.latexRendererUrl, { latex: latex, format: 'png', dpi: 120 }, { timeout: 10000 });
+    const response = await axios.post(IMAGE_CONFIG.latexRendererUrl, { latex, format: 'png', dpi: 120 }, { timeout: 10000 });
     res.json({ success: true, imageUrl: response.data.url });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -686,7 +874,7 @@ app.post('/api/render-latex', async (req, res) => {
 app.post('/webhook/whatsapp', async (req, res) => {
   res.status(200).send('OK');
   try {
-    const { from, message, imageUrl } = req.body;
+    const { from, message, imageUrl, isPDF, pageCount } = req.body;
     if (!from || !message) return;
     
     const userId = from;
@@ -711,7 +899,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     }
     
     const userLevel = await getUserLevel(userId, platform);
-    const result = await processChat(userId, platform, userLevel, message, imageUrl);
+    const result = await processChat(userId, platform, userLevel, message, imageUrl, isPDF, pageCount);
     console.log(`[WA] Response to ${from}: ${result.content.substring(0, 100)}...`);
     
   } catch (err) {
@@ -751,16 +939,12 @@ app.listen(PORT, () => {
 ╠════════════════════════════════════════════════════════════════════╣
 ║  ✅ Server running on port ${PORT}                                      ║
 ║  ✅ YENNI siap membantu! 🚀                                         ║
-║  ✅ Prompt Caching aktif (DeepSeek/OpenAI)                         ║
+║  ✅ OCR: Novita AI (murah, $0.03/1M token)                         ║
+║  ✅ Batasan PDF per level (5/5/10/20 halaman)                      ║
+║  ✅ Browserless PDF (hemat RAM)                                    ║
 ║  ✅ Session Cache (Redis/Memory)                                   ║
-║  ✅ Summary Cache (Redis/Memory)                                   ║
-║  ✅ Response Cache (Redis/Memory)                                  ║
-║  ✅ Long Term Memory (Supabase + Redis)                            ║
-║  ✅ Input Gambar (OCR via GPT Mini)                                ║
-║  ✅ Generate Gambar (Gemini + DALL-E prompt)                       ║
-║  ✅ LaTeX Renderer                                                 ║
-║  ✅ Academic Writing (tanya detail dulu)                           ║
-║  ✅ Output Format (Text/PDF/DOCX)                                  ║
+║  ✅ Long Term Memory (Supabase)                                    ║
+║  ✅ Academic Writing + Output PDF                                  ║
 ╚════════════════════════════════════════════════════════════════════╝
   `);
 });
