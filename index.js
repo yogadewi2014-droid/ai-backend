@@ -111,17 +111,13 @@ const CONFIG = {
 };
 
 // ============================================
-// TAMBAHAN: KONFIGURASI GAMBAR & OUTPUT
+// KONFIGURASI GAMBAR & OUTPUT
 // ============================================
 const IMAGE_CONFIG = {
   googleImagenApiKey: process.env.GOOGLE_IMAGEN_API_KEY,
-  googleImagenUrl: 'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict',
-  latexRendererUrl: process.env.LATEX_RENDERER_URL || 'https://latex.railway.app/render',
-  allowedImageTypes: ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'],
-  maxImageSize: 5 * 1024 * 1024
+  latexRendererUrl: process.env.LATEX_RENDERER_URL || 'https://latex.railway.app/render'
 };
 
-// Storage untuk menahan request academic writing dan output
 const pendingAcademicRequests = new Map();
 const pendingOutputRequests = new Map();
 
@@ -129,33 +125,14 @@ const pendingOutputRequests = new Map();
 // GAYA JAWABAN PER LEVEL
 // ============================================
 const answerStyle = {
-  sd_smp: {
-    maxTokens: 200,
-    maxTokensDetail: 300,
-    maxTokensArticle: 400,
-    temperature: 0.5,
-    requireFollowUp: true
-  },
-  sma: {
-    maxTokens: 250,
-    maxTokensArticle: 700,
-    temperature: 0.5,
-    requireFollowUp: true
-  },
-  mahasiswa: {
-    maxTokens: 400,
-    temperature: 0.6,
-    requireFollowUp: false
-  },
-  dosen_politikus: {
-    maxTokens: 2000,
-    temperature: 0.7,
-    requireFollowUp: false
-  }
+  sd_smp: { maxTokens: 200, maxTokensDetail: 300, maxTokensArticle: 400, temperature: 0.5, requireFollowUp: true },
+  sma: { maxTokens: 250, maxTokensArticle: 700, temperature: 0.5, requireFollowUp: true },
+  mahasiswa: { maxTokens: 400, temperature: 0.6, requireFollowUp: false },
+  dosen_politikus: { maxTokens: 2000, temperature: 0.7, requireFollowUp: false }
 };
 
 // ============================================
-// PROMPT CACHING - STATIC PREFIX & INTENT RULES
+// PROMPT CACHING
 // ============================================
 const STATIC_PREFIX = `Anda adalah YENNI, asisten AI yang ramah dan membantu.
 Ikuti aturan berikut:
@@ -174,9 +151,6 @@ const INTENT_RULES = {
   speech: `BUAT PIDATO: Pembukaan 15%, Isi 70% (data+cerita), Penutup 15%, gunakan kata "KITA".`
 };
 
-// ============================================
-// BASE PROMPTS (DIPERKAYA DENGAN STATIC PREFIX)
-// ============================================
 const basePrompts = {
   sd_smp: `${STATIC_PREFIX}\n\nAnda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Akhiri "Ada yang mau ditanya lagi?".`,
   sma: `${STATIC_PREFIX}\n\nAnda guru SMA. Jawab 5 kalimat. Beri contoh. Akhiri "Butuh contoh soal?".`,
@@ -184,9 +158,6 @@ const basePrompts = {
   dosen_politikus: `${STATIC_PREFIX}\n\nAnda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi.`
 };
 
-// ============================================
-// INSTRUKSI KHUSUS
-// ============================================
 const specialInstructions = {
   sd_smp_article: `\n\nFORMAT ARTIKEL SD/SMP: Maksimal 300 kata, bahasa sederhana, 3-4 paragraf, akhiri ajakan diskusi.`,
   sma_article: `\n\nFORMAT ARTIKEL SMA: Maksimal 600 kata, 5-7 paragraf, beri contoh, bahasa jelas dan logis.`,
@@ -195,9 +166,6 @@ const specialInstructions = {
   dosen_speech: `\n\nFORMAT PIDATO: Pembukaan 15%, Isi 70% (data+cerita+emosi), Penutup 15%, gunakan kata "KITA".`
 };
 
-// ============================================
-// FUNGSI MEMBANGUN PROMPT DENGAN INTENT
-// ============================================
 function getIntent(userMessage) {
   const lowerMsg = userMessage.toLowerCase();
   if (lowerMsg.includes('artikel') && (lowerMsg.includes('sd') || lowerMsg.includes('smp'))) return 'article_sd';
@@ -211,7 +179,6 @@ function getIntent(userMessage) {
 async function buildSystemPrompt(level, userId, userMessage) {
   const intent = getIntent(userMessage);
   let prompt = basePrompts[level] || basePrompts.sma;
-  
   prompt += `\n\n${INTENT_RULES[intent] || INTENT_RULES.default}`;
   
   let longTermMemory = null;
@@ -220,45 +187,28 @@ async function buildSystemPrompt(level, userId, userMessage) {
     longTermMemory = await getCache(cacheKey);
     if (!longTermMemory) {
       try {
-        const { data } = await supabase
-          .from('long_term_memory')
-          .select('summary')
-          .eq('user_id', userId)
-          .single();
-        if (data?.summary) {
-          longTermMemory = data.summary;
-          await setCache(cacheKey, longTermMemory, 43200);
-        }
-      } catch (e) {}
+        const { data } = await supabase.from('long_term_memory').select('summary').eq('user_id', userId).single();
+        if (data?.summary) { longTermMemory = data.summary; await setCache(cacheKey, longTermMemory, 43200); }
+      } catch(e) {}
     }
   }
-  
-  if (longTermMemory) {
-    prompt += `\n\nCatatan tentang pengguna: ${longTermMemory}`;
-  }
+  if (longTermMemory) prompt += `\n\nCatatan tentang pengguna: ${longTermMemory}`;
   
   const lowerMsg = userMessage.toLowerCase();
   const isAskingArticle = lowerMsg.includes('artikel') || lowerMsg.includes('tulisan') || lowerMsg.includes('buatkan');
-  
   if (level === 'sd_smp' && isAskingArticle) prompt += specialInstructions.sd_smp_article;
   else if (level === 'sma' && isAskingArticle) prompt += specialInstructions.sma_article;
   else if (level === 'mahasiswa' && (lowerMsg.includes('jurnal') || lowerMsg.includes('skripsi'))) prompt += specialInstructions.mahasiswa_journal;
   else if (level === 'dosen_politikus' && lowerMsg.includes('sinta')) prompt += specialInstructions.dosen_sinta;
   else if (level === 'dosen_politikus' && (lowerMsg.includes('pidato') || lowerMsg.includes('speech'))) prompt += specialInstructions.dosen_speech;
-  
   prompt += `\n\nJangan berhalusinasi. Jika tidak tahu, katakan "Saya tidak tahu".`;
   return prompt;
 }
 
-function getTimeOfDay() {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'pagi';
-  if (hour < 18) return 'siang';
-  return 'malam';
-}
+function getTimeOfDay() { const hour = new Date().getHours(); if (hour < 12) return 'pagi'; if (hour < 18) return 'siang'; return 'malam'; }
 
 // ============================================
-// PENYIMPANAN LEVEL USER (DENGAN REDIS)
+// PENYIMPANAN LEVEL USER
 // ============================================
 const userLevels = new Map();
 const userHasChosen = new Map();
@@ -268,22 +218,17 @@ async function getUserLevel(userId, platform) {
   if (sessionLevel) return sessionLevel;
   return userLevels.get(`${userId}:${platform}`) || 'sd_smp';
 }
-
 async function setUserLevel(userId, platform, level) {
   await setUserSession(userId, platform, level);
   userLevels.set(`${userId}:${platform}`, level);
   console.log(`[LEVEL] ${platform}:${userId} → ${level}`);
 }
-
 async function hasUserChosenLevel(userId, platform) {
   const session = await getCache(`session:${userId}:${platform}`);
   if (session) return true;
   return userHasChosen.get(`${userId}:${platform}`) || false;
 }
-
-async function setUserChosenLevel(userId, platform, chosen = true) {
-  userHasChosen.set(`${userId}:${platform}`, chosen);
-}
+async function setUserChosenLevel(userId, platform, chosen = true) { userHasChosen.set(`${userId}:${platform}`, chosen); }
 
 // ============================================
 // LOGGER
@@ -294,30 +239,14 @@ const logger = {
   warn: (msg, data) => console.warn(`[WARN] ${msg}`, data ? JSON.stringify(data) : '')
 };
 
-// ============================================
-// TEKS LEVEL INFO
-// ============================================
 function getLevelInfoText() {
-  return `${getRandomGreeting()}
-
-💰 *Pilih Level Belajar Anda*:
-
-/level_sd - *SD/SMP* - ${CONFIG.levelPrices.sd_smp}
-/level_sma - *SMA* - ${CONFIG.levelPrices.sma}
-/level_mahasiswa - *Mahasiswa* - ${CONFIG.levelPrices.mahasiswa}
-/level_dosen - *Dosen/Politikus* - ${CONFIG.levelPrices.dosen_politikus}
-
-**Yenni - Sahabat AI Anda** 💙`;
+  return `${getRandomGreeting()}\n\n💰 *Pilih Level Belajar Anda*:\n\n/level_sd - *SD/SMP* - ${CONFIG.levelPrices.sd_smp}\n/level_sma - *SMA* - ${CONFIG.levelPrices.sma}\n/level_mahasiswa - *Mahasiswa* - ${CONFIG.levelPrices.mahasiswa}\n/level_dosen - *Dosen/Politikus* - ${CONFIG.levelPrices.dosen_politikus}\n\n**Yenni - Sahabat AI Anda** 💙`;
 }
 
-// ============================================
-// RESPON SAPAAN
-// ============================================
 function getGreetingResponse(text, level) {
   const lowerText = text.toLowerCase().trim();
   const greetingsList = ['hai', 'halo', 'hi', 'hey', 'assalamualaikum', 'salam'];
   const askingWho = ['siapa kamu', 'nama kamu', 'yenni'];
-  
   if (greetingsList.some(g => lowerText.includes(g)) || askingWho.some(q => lowerText.includes(q))) {
     const responses = {
       sd_smp: `Hai! 👋 Aku **Yenni**, sahabat AI kamu. Ada yang bisa aku bantu? 🌟\n\n${getRandomGreeting()}`,
@@ -331,7 +260,7 @@ function getGreetingResponse(text, level) {
 }
 
 // ============================================
-// SUPABASE
+// SUPABASE & CACHE
 // ============================================
 let supabase = null;
 if (CONFIG.supabase.url && CONFIG.supabase.key) {
@@ -339,117 +268,46 @@ if (CONFIG.supabase.url && CONFIG.supabase.key) {
   logger.info('Supabase connected');
 }
 
-// ============================================
-// CACHE REDIS
-// ============================================
 let redisClient = null;
 let redisConnected = false;
 const memoryCache = new Map();
 
 async function initRedis() {
-  if (!process.env.REDIS_URL) {
-    logger.info('Redis not configured, using memory cache');
-    return;
-  }
+  if (!process.env.REDIS_URL) { logger.info('Redis not configured, using memory cache'); return; }
   try {
     redisClient = createRedisClient({ url: process.env.REDIS_URL });
     redisClient.on('error', (err) => logger.warn('Redis error:', err.message));
     await redisClient.connect();
     redisConnected = true;
     logger.info('Redis connected');
-  } catch (err) {
-    logger.warn('Redis failed, using memory cache');
-    redisConnected = false;
-  }
+  } catch (err) { logger.warn('Redis failed, using memory cache'); redisConnected = false; }
 }
 initRedis();
 
 async function getCache(key) {
-  if (redisConnected && redisClient) {
-    const data = await redisClient.get(key);
-    return data ? JSON.parse(data) : null;
-  }
+  if (redisConnected && redisClient) { const data = await redisClient.get(key); return data ? JSON.parse(data) : null; }
   const cached = memoryCache.get(key);
   if (cached && cached.expiry > Date.now()) return cached.data;
   return null;
 }
-
 async function setCache(key, data, ttlSeconds = 3600) {
-  if (redisConnected && redisClient) {
-    await redisClient.setEx(key, ttlSeconds, JSON.stringify(data));
-  } else {
-    memoryCache.set(key, { data, expiry: Date.now() + (ttlSeconds * 1000) });
-  }
+  if (redisConnected && redisClient) { await redisClient.setEx(key, ttlSeconds, JSON.stringify(data)); }
+  else { memoryCache.set(key, { data, expiry: Date.now() + (ttlSeconds * 1000) }); }
 }
-
 async function delCache(key) {
-  if (redisConnected && redisClient) {
-    await redisClient.del(key);
-  } else {
-    memoryCache.delete(key);
-  }
+  if (redisConnected && redisClient) { await redisClient.del(key); }
+  else { memoryCache.delete(key); }
 }
 
-// ============================================
-// SESSION CACHE (REDIS)
-// ============================================
-async function setUserSession(userId, platform, level) {
-  const key = `session:${userId}:${platform}`;
-  await setCache(key, { level, lastActive: Date.now() }, 86400);
-}
+async function setUserSession(userId, platform, level) { await setCache(`session:${userId}:${platform}`, { level, lastActive: Date.now() }, 86400); }
+async function getUserSession(userId, platform) { const session = await getCache(`session:${userId}:${platform}`); return session ? session.level : null; }
 
-async function getUserSession(userId, platform) {
-  const key = `session:${userId}:${platform}`;
-  const session = await getCache(key);
-  return session ? session.level : null;
-}
-
-async function clearUserSession(userId, platform) {
-  const key = `session:${userId}:${platform}`;
-  await delCache(key);
-}
-
-// ============================================
-// SUMMARY CACHE (REDIS)
-// ============================================
-async function setSummaryCache(userId, summary, platform = 'general') {
-  const key = `summary:${userId}:${platform}`;
-  await setCache(key, { summary, updatedAt: Date.now() }, 43200);
-}
-
-async function getSummaryCache(userId, platform = 'general') {
-  const key = `summary:${userId}:${platform}`;
-  const data = await getCache(key);
-  return data ? data.summary : null;
-}
-
+async function setSummaryCache(userId, summary, platform = 'general') { await setCache(`summary:${userId}:${platform}`, { summary, updatedAt: Date.now() }, 43200); }
+async function getSummaryCache(userId, platform = 'general') { const data = await getCache(`summary:${userId}:${platform}`); return data ? data.summary : null; }
 async function updateSummaryCache(userId, newSummary, platform = 'general') {
   const existing = await getSummaryCache(userId, platform);
-  if (existing) {
-    await setSummaryCache(userId, `${existing}\n${newSummary}`, platform);
-  } else {
-    await setSummaryCache(userId, newSummary, platform);
-  }
-}
-
-// ============================================
-// BUDGET TRACKING
-// ============================================
-const userBudget = new Map();
-
-async function checkBudget(userId, estimatedCostUSD) {
-  const today = new Date().toDateString();
-  const userData = userBudget.get(userId) || { dailyUsage: 0, date: today };
-  if (userData.date !== today) userData.dailyUsage = 0;
-  if (userData.dailyUsage + estimatedCostUSD > 0.5) return { allowed: false };
-  return { allowed: true };
-}
-
-async function recordUsage(userId, modelName, costUSD) {
-  const today = new Date().toDateString();
-  const userData = userBudget.get(userId) || { dailyUsage: 0, date: today };
-  userData.dailyUsage += costUSD;
-  userBudget.set(userId, userData);
+  if (existing) { await setSummaryCache(userId, `${existing}\n${newSummary}`, platform); }
+  else { await setSummaryCache(userId, newSummary, platform); }
 }
 
 // ============================================
@@ -460,221 +318,73 @@ function estimateCost(modelName, inputTokens, outputTokens = 300) {
   if (!model) return 0;
   return ((inputTokens / 1000) * model.pricePer1KInput) + ((outputTokens / 1000) * model.pricePer1KOutput);
 }
+function selectModel(level) { return { model: CONFIG.levelModelMap[level] || 'gptMini', reason: 'by_level' }; }
 
-function selectModel(level, prompt) {
-  let model = CONFIG.levelModelMap[level] || 'gptMini';
-  return { model, reason: 'by_level' };
-}
-
-// ============================================
-// SEARCH
-// ============================================
 async function searchWeb(query) {
   if (!CONFIG.serper.apiKey) return [];
   const cacheKey = `search:${query}`;
   const cached = await getCache(cacheKey);
   if (cached) return cached;
   try {
-    const response = await axios.post(CONFIG.serper.url, { q: query, gl: 'id', hl: 'id', num: 3 }, {
-      headers: { 'X-API-KEY': CONFIG.serper.apiKey },
-      timeout: 10000
-    });
+    const response = await axios.post(CONFIG.serper.url, { q: query, gl: 'id', hl: 'id', num: 3 }, { headers: { 'X-API-KEY': CONFIG.serper.apiKey }, timeout: 10000 });
     const results = (response.data.organic || []).slice(0, 3).map(r => ({ title: r.title, snippet: r.snippet }));
     await setCache(cacheKey, results, 21600);
     return results;
-  } catch (err) {
-    return [];
-  }
+  } catch (err) { return []; }
 }
 
 // ============================================
-// FITUR INPUT GAMBAR (OCR dengan GPT Mini)
+// INPUT GAMBAR (OCR)
 // ============================================
 async function processImageInput(imageUrl, userQuestion, targetModel, level) {
   try {
     const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 15000 });
     const base64Image = Buffer.from(imageResponse.data).toString('base64');
-    
     const ocrMessages = [
-      { role: 'system', content: 'Anda adalah OCR. Ekstrak teks dari gambar ini. Jika ada soal matematika, tulis dalam format LaTeX. Jika ada diagram, jelaskan.' },
-      { role: 'user', content: [
-        { type: 'text', text: userQuestion || 'Ekstrak teks dari gambar ini:' },
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-      ] }
+      { role: 'system', content: 'Anda adalah OCR. Ekstrak teks dari gambar ini. Jika ada soal matematika, tulis dalam format LaTeX.' },
+      { role: 'user', content: [{ type: 'text', text: userQuestion || 'Ekstrak teks dari gambar ini:' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] }
     ];
-    
     const ocrResult = await callAI('gptMini', ocrMessages, 'sd_smp');
     if (!ocrResult.success) return { success: false, error: 'Gagal membaca gambar' };
-    
     const finalMessages = [
-      { role: 'system', content: `Anda adalah asisten AI. Analisis gambar berikut: ${ocrResult.content}. Jawab pertanyaan user dengan tepat.` },
-      { role: 'user', content: userQuestion || 'Jelaskan apa yang ada di gambar ini.' }
+      { role: 'system', content: `Analisis gambar: ${ocrResult.content}. Jawab pertanyaan user.` },
+      { role: 'user', content: userQuestion || 'Jelaskan gambar ini.' }
     ];
-    
     const finalResult = await callAI(targetModel, finalMessages, level);
-    return { success: true, content: finalResult.content, ocrText: ocrResult.content };
-  } catch (err) {
-    logger.error('Image processing error:', err);
-    return { success: false, error: err.message };
-  }
+    return { success: true, content: finalResult.content };
+  } catch (err) { return { success: false, error: err.message }; }
 }
 
 // ============================================
-// FITUR GENERATE GAMBAR (Google Imagen API)
-// ============================================
-async function generateImage(prompt, aspectRatio = '1:1') {
-  if (!IMAGE_CONFIG.googleImagenApiKey) {
-    return { success: false, error: 'Google Imagen API key not configured' };
-  }
-  
-  try {
-    const response = await axios.post(
-      `${IMAGE_CONFIG.googleImagenUrl}?key=${IMAGE_CONFIG.googleImagenApiKey}`,
-      {
-        instances: [{ prompt: prompt }],
-        parameters: {
-          sampleCount: 1,
-          aspectRatio: aspectRatio,
-          safetyFilterLevel: 'block_only_high'
-        }
-      },
-      { timeout: 60000 }
-    );
-    
-    if (response.data?.predictions?.[0]?.bytesBase64Encoded) {
-      return { 
-        success: true, 
-        imageBase64: response.data.predictions[0].bytesBase64Encoded,
-        mimeType: 'image/png'
-      };
-    }
-    return { success: false, error: 'No image generated' };
-  } catch (err) {
-    logger.error('Image generation error:', err);
-    return { success: false, error: err.message };
-  }
-}
-
-// ============================================
-// FITUR LATEX RENDERER
-// ============================================
-async function renderLatex(latexCode) {
-  try {
-    const response = await axios.post(IMAGE_CONFIG.latexRendererUrl, {
-      latex: latexCode,
-      format: 'png',
-      dpi: 120
-    }, { timeout: 10000 });
-    return { success: true, imageUrl: response.data.url };
-  } catch (err) {
-    logger.error('LaTeX render error:', err);
-    return { success: false, error: err.message };
-  }
-}
-
-function extractLatexFromText(text) {
-  const latexRegex = /\$\$(.*?)\$\$|\$(.*?)\$/gs;
-  const matches = [];
-  let match;
-  while ((match = latexRegex.exec(text)) !== null) {
-    matches.push(match[1] || match[2]);
-  }
-  return matches;
-}
-
-// ============================================
-// FITUR ACADEMIC WRITING HOLDER
+// ACADEMIC WRITING
 // ============================================
 function isAcademicWritingRequest(message, level) {
   if (level !== 'mahasiswa' && level !== 'dosen_politikus') return false;
-  
-  const keywords = [
-    'artikel', 'jurnal', 'paper', 'skripsi', 'tesis', 'disertasi',
-    'karya ilmiah', 'essay', 'makalah', 'review', 'literature review',
-    'proposal', 'penelitian', 'studi literatur'
-  ];
+  const keywords = ['artikel', 'jurnal', 'paper', 'skripsi', 'tesis', 'karya ilmiah', 'essay', 'makalah', 'proposal'];
   return keywords.some(k => message.toLowerCase().includes(k));
 }
-
 function askForAcademicDetails(level, originalMessage) {
   const questions = {
-    mahasiswa: `📝 *Saya akan bantu buat ${originalMessage.substring(0, 50)}...*
-
-Mohon berikan detail berikut agar artikelnya lebih berkualitas:
-
-1️⃣ *Topik utama*: Apa topik spesifik yang ingin dibahas?
-2️⃣ *Tujuan*: Untuk tugas kuliah, jurnal, atau publikasi?
-3️⃣ *Panjang*: Berapa halaman atau kata yang diharapkan?
-4️⃣ *Referensi*: Ada sumber atau gaya sitasi tertentu? (APA/MLA/Harvard)
-5️⃣ *Batasan*: Apakah ada aspek yang tidak boleh dibahas?
-
-Ketik *LANJUT* setelah mengisi detail di atas.`,
-    
-    dosen_politikus: `📊 *Academic Writing Assistant*
-
-Untuk menghasilkan artikel yang HIGH VALUE, saya perlu informasi:
-
-1️⃣ *Topik/Isu*: Judul atau fokus utama artikel
-2️⃣ *Jenis publikasi*: Jurnal SINTA, prosiding, buku, atau policy brief?
-3️⃣ *Target audiens*: Akademisi, praktisi, atau pembuat kebijakan?
-4️⃣ *Panjang naskah*: Berapa kata/halaman?
-5️⃣ *Referensi*: Apakah ada jurnal atau data spesifik yang harus disertakan?
-6️⃣ *Format*: IMRAD, essay, atau format khusus lainnya?
-
-Ketik *LANJUT* setelah mengisi detail.`
+    mahasiswa: `📝 *Saya akan bantu buat ${originalMessage.substring(0, 50)}...*\n\nMohon berikan detail:\n1️⃣ Topik utama\n2️⃣ Tujuan (tugas/jurnal)\n3️⃣ Panjang (halaman/kata)\n4️⃣ Referensi (APA/MLA/Harvard)\n\nKetik *LANJUT* setelah mengisi detail.`,
+    dosen_politikus: `📊 *Academic Writing Assistant*\n\nDetail yang diperlukan:\n1️⃣ Topik/Isu\n2️⃣ Jenis publikasi (Jurnal SINTA/prosiding)\n3️⃣ Target audiens\n4️⃣ Panjang naskah\n5️⃣ Format (IMRAD/essay)\n\nKetik *LANJUT* setelah mengisi detail.`
   };
-  
   return questions[level] || questions.mahasiswa;
 }
-
-// ============================================
-// FITUR OUTPUT FORMAT (Text/PDF/DOCX)
-// ============================================
 async function askOutputFormat(userId, content, model, level) {
   pendingOutputRequests.set(userId, { content, model, level });
-  
-  return `✅ *Konten telah selesai dibuat!*
-
-Pilih format yang diinginkan:
-
-/format_text - Kirim sebagai teks biasa
-/format_pdf - Kirim sebagai file PDF
-/format_docx - Kirim sebagai file DOCX
-
-Ketik perintah di atas untuk memilih format.`;
+  return `✅ *Konten selesai!*\n\nPilih format:\n/format_text - Teks\n/format_pdf - PDF\n/format_docx - DOCX`;
 }
-
 async function generatePdf(content, title = 'Document') {
   try {
-    const response = await axios.post('https://api.pdf.co/v1/pdf/convert/from/html', {
-      html: `<html><head><meta charset="UTF-8"></head><body><h1>${title}</h1>${content.replace(/\n/g, '<br>')}</body></html>`,
-      name: `${title}.pdf`,
-      margins: '20px'
-    }, {
-      headers: { 'x-api-key': process.env.PDF_CO_API_KEY },
-      timeout: 30000
-    });
+    const response = await axios.post('https://api.pdf.co/v1/pdf/convert/from/html', { html: `<html><body><h1>${title}</h1>${content.replace(/\n/g,'<br>')}</body></html>`, name: `${title}.pdf` }, { headers: { 'x-api-key': process.env.PDF_CO_API_KEY }, timeout: 30000 });
     return { success: true, url: response.data.url };
-  } catch (err) {
-    logger.error('PDF generation error:', err);
-    return { success: false, error: err.message };
-  }
+  } catch (err) { return { success: false, error: err.message }; }
 }
-
 async function generateDocx(content, title = 'Document') {
   try {
-    const response = await axios.post('https://api.pdf.co/v1/docx/convert/from/html', {
-      html: `<html><head><meta charset="UTF-8"></head><body><h1>${title}</h1>${content.replace(/\n/g, '<br>')}</body></html>`,
-      name: `${title}.docx`
-    }, {
-      headers: { 'x-api-key': process.env.PDF_CO_API_KEY },
-      timeout: 30000
-    });
+    const response = await axios.post('https://api.pdf.co/v1/docx/convert/from/html', { html: `<html><body><h1>${title}</h1>${content.replace(/\n/g,'<br>')}</body></html>`, name: `${title}.docx` }, { headers: { 'x-api-key': process.env.PDF_CO_API_KEY }, timeout: 30000 });
     return { success: true, url: response.data.url };
-  } catch (err) {
-    logger.error('DOCX generation error:', err);
-    return { success: false, error: err.message };
-  }
+  } catch (err) { return { success: false, error: err.message }; }
 }
 
 // ============================================
@@ -683,63 +393,29 @@ async function generateDocx(content, title = 'Document') {
 async function callAI(modelName, messages, level = 'sma', timeoutMs = null, isArticle = false) {
   const model = CONFIG.ai[modelName];
   if (!model || !model.key) return { success: false, error: `Model ${modelName} not configured` };
-  
   const style = answerStyle[level] || answerStyle.sma;
   let maxTokens = style.maxTokens;
   if (isArticle && style.maxTokensArticle) maxTokens = style.maxTokensArticle;
-  
   try {
-    const response = await axios.post(model.url, {
-      model: model.model,
-      messages: messages,
-      temperature: style.temperature,
-      max_tokens: maxTokens
-    }, {
-      headers: { 'Authorization': `Bearer ${model.key}` },
-      timeout: timeoutMs || model.timeout || 30000
-    });
-    
-    if (response.data.usage?.prompt_cache_hit_tokens) {
-      const hitTokens = response.data.usage.prompt_cache_hit_tokens;
-      const missTokens = response.data.usage.prompt_cache_miss_tokens;
-      const total = hitTokens + missTokens;
-      const hitRate = total > 0 ? (hitTokens / total) * 100 : 0;
-      console.log(`🔥 [${modelName}] Cache Hit Rate: ${hitRate.toFixed(1)}%`);
-    }
-    
+    const response = await axios.post(model.url, { model: model.model, messages, temperature: style.temperature, max_tokens: maxTokens }, { headers: { 'Authorization': `Bearer ${model.key}` }, timeout: timeoutMs || model.timeout || 30000 });
+    if (response.data.usage?.prompt_cache_hit_tokens) { const hit = response.data.usage.prompt_cache_hit_tokens; const total = hit + (response.data.usage.prompt_cache_miss_tokens||0); console.log(`🔥 [${modelName}] Cache: ${total>0?((hit/total)*100).toFixed(1):0}% hit`); }
     return { success: true, content: response.data.choices[0].message.content, model: modelName };
-  } catch (err) {
-    logger.error(`AI Error (${modelName}):`, err.message);
-    return { success: false, error: err.message, model: modelName };
-  }
+  } catch (err) { logger.error(`AI Error (${modelName}):`, err.message); return { success: false, error: err.message, model: modelName }; }
 }
-
 async function callWithFallback(modelName, messages, level, isArticle = false) {
   const chain = [modelName, ...(CONFIG.fallbackChain[modelName] || [])];
   for (const attempt of chain) {
     const result = await callAI(attempt, messages, level, null, isArticle);
-    if (result.success) {
-      if (attempt !== modelName) logger.warn(`Fallback: ${modelName} → ${attempt}`);
-      return result;
-    }
+    if (result.success) { if (attempt !== modelName) logger.warn(`Fallback: ${modelName} → ${attempt}`); return result; }
   }
-  return { success: true, content: "Maaf, layanan sedang sibuk. Silakan coba lagi nanti.", model: 'system' };
+  return { success: true, content: "Maaf, layanan sedang sibuk.", model: 'system' };
 }
 
-// ============================================
-// DATABASE
-// ============================================
 async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
   if (!supabase) return;
-  try {
-    await supabase.from('chat_history').insert({
-      user_id: userId, platform, role, content, model_used: modelUsed, created_at: new Date()
-    });
-  } catch (e) {
-    logger.error('Save error:', e.message);
-  }
+  try { await supabase.from('chat_history').insert({ user_id: userId, platform, role, content, model_used: modelUsed, created_at: new Date() }); }
+  catch(e) { logger.error('Save error:', e.message); }
 }
-
 async function getChatHistory(userId, platform, limit = 10) {
   if (!supabase) return [];
   const { data, error } = await supabase.from('chat_history').select('role, content').eq('user_id', userId).eq('platform', platform).order('created_at', { ascending: false }).limit(limit);
@@ -748,109 +424,56 @@ async function getChatHistory(userId, platform, limit = 10) {
 }
 
 // ============================================
-// PROSES CHAT
+// PROSES CHAT UTAMA
 // ============================================
 async function processChat(userId, platform, level, message, imageUrl = null) {
   const startTime = Date.now();
   let result = null;
   logger.info(`Processing: ${userId}, ${platform}, ${level}, ${message.substring(0, 50)}`);
   
-  // CEK GAMBAR (imageUrl tidak null)
   if (imageUrl) {
-    let targetModel = 'gptMini';
-    if (level === 'sd_smp') targetModel = 'gptMini';
-    else if (level === 'sma') targetModel = 'deepseekV32';
-    else if (level === 'mahasiswa') targetModel = 'deepseekReasoning';
-    else if (level === 'dosen_politikus') targetModel = 'gpt5';
-    
+    let targetModel = level === 'sd_smp' ? 'gptMini' : (level === 'sma' ? 'deepseekV32' : (level === 'mahasiswa' ? 'deepseekReasoning' : 'gpt5'));
     const imageResult = await processImageInput(imageUrl, message, targetModel, level);
-    if (imageResult.success) {
-      return { success: true, content: imageResult.content, model: targetModel };
-    }
-    return { success: true, content: `Gagal memproses gambar: ${imageResult.error}`, model: 'system' };
+    if (imageResult.success) return { success: true, content: imageResult.content, model: targetModel };
+    return { success: true, content: `Gagal proses gambar: ${imageResult.error}`, model: 'system' };
   }
   
   const greetingResponse = getGreetingResponse(message, level);
-  if (greetingResponse) {
-    return { success: true, content: greetingResponse, model: 'system' };
-  }
+  if (greetingResponse) return { success: true, content: greetingResponse, model: 'system' };
   
-  // CEK ACADEMIC WRITING (Tahan dulu, tanya detail)
   const pendingKey = `${userId}:${platform}`;
   const existingPending = pendingAcademicRequests.get(pendingKey);
   
   if (isAcademicWritingRequest(message, level) && !existingPending) {
-    pendingAcademicRequests.set(pendingKey, {
-      level,
-      platform,
-      originalMessage: message,
-      collectedDetails: null,
-      step: 'waiting_for_details'
-    });
-    
-    const askText = askForAcademicDetails(level, message);
-    return { success: true, content: askText, model: 'system', isAcademicHold: true
-      }
+    pendingAcademicRequests.set(pendingKey, { level, platform, originalMessage: message, collectedDetails: null, step: 'waiting_for_details' });
+    return { success: true, content: askForAcademicDetails(level, message), model: 'system', isAcademicHold: true };
+  }
   
-  // HANDLE RESPON DETAIL ACADEMIC (setelah user kirim detail)
   const pendingRequest = pendingAcademicRequests.get(pendingKey);
   if (pendingRequest && pendingRequest.step === 'waiting_for_details' && !message.startsWith('/')) {
     if (message.toLowerCase().includes('lanjut')) {
       pendingRequest.step = 'processing';
       pendingAcademicRequests.set(pendingKey, pendingRequest);
-      
-      // Build prompt dengan detail yang sudah dikumpulkan
-      const detailPrompt = `Buatkan ${pendingRequest.originalMessage}\n\nDetail yang diberikan user:\n${pendingRequest.collectedDetails || message}\n\nBuatkan dengan kualitas tinggi, lengkap, dan sesuai standar akademik.`;
-      
+      const detailPrompt = `Buatkan ${pendingRequest.originalMessage}\n\nDetail: ${pendingRequest.collectedDetails || message}\nBuatkan dengan kualitas tinggi.`;
       let targetModel = pendingRequest.level === 'mahasiswa' ? 'deepseekReasoning' : 'gpt5';
-      const result = await callWithFallback(targetModel, [{ role: 'user', content: detailPrompt }], pendingRequest.level);
-      
+      const aiResult = await callWithFallback(targetModel, [{ role: 'user', content: detailPrompt }], pendingRequest.level);
       pendingAcademicRequests.delete(pendingKey);
-      
-      // Tanya format output
-      const formatQuestion = await askOutputFormat(userId, result.content, result.model, pendingRequest.level);
-      return { success: true, content: `${result.content}\n\n${formatQuestion}`, model: result.model };
+      const formatQuestion = await askOutputFormat(userId, aiResult.content, aiResult.model, pendingRequest.level);
+      return { success: true, content: `${aiResult.content}\n\n${formatQuestion}`, model: aiResult.model };
     } else {
-      // Kumpulkan detail
-      pendingRequest.collectedDetails = pendingRequest.collectedDetails 
-        ? `${pendingRequest.collectedDetails}\n${message}` 
-        : message;
+      pendingRequest.collectedDetails = pendingRequest.collectedDetails ? `${pendingRequest.collectedDetails}\n${message}` : message;
       pendingAcademicRequests.set(pendingKey, pendingRequest);
-      return { success: true, content: "Terima kasih. Detail telah dicatat. Kirim *LANJUT* untuk mulai menulis artikel.", model: 'system' };
+      return { success: true, content: "Detail dicatat. Kirim *LANJUT* untuk mulai menulis.", model: 'system' };
     }
   }
   
-  // HANDLE FORMAT OUTPUT (PDF/DOCX/TEXT)
   if (message.startsWith('/format_')) {
     const format = message.replace('/format_', '').toLowerCase();
     const outputData = pendingOutputRequests.get(userId);
-    
-    if (!outputData) {
-      return { success: true, content: "Tidak ada konten yang tersedia. Silakan buat artikel terlebih dahulu.", model: 'system' };
-    }
-    
-    if (format === 'text') {
-      pendingOutputRequests.delete(userId);
-      return { success: true, content: outputData.content, model: outputData.model };
-    }
-    
-    if (format === 'pdf') {
-      const pdfResult = await generatePdf(outputData.content, 'Academic_Article');
-      if (pdfResult.success) {
-        pendingOutputRequests.delete(userId);
-        return { success: true, content: `📄 PDF siap diunduh: ${pdfResult.url}`, model: outputData.model };
-      }
-      return { success: true, content: `Gagal buat PDF: ${pdfResult.error}`, model: 'system' };
-    }
-    
-    if (format === 'docx') {
-      const docxResult = await generateDocx(outputData.content, 'Academic_Article');
-      if (docxResult.success) {
-        pendingOutputRequests.delete(userId);
-        return { success: true, content: `📝 DOCX siap diunduh: ${docxResult.url}`, model: outputData.model };
-      }
-      return { success: true, content: `Gagal buat DOCX: ${docxResult.error}`, model: 'system' };
-    }
+    if (!outputData) return { success: true, content: "Tidak ada konten. Buat artikel dulu.", model: 'system' };
+    if (format === 'text') { pendingOutputRequests.delete(userId); return { success: true, content: outputData.content, model: outputData.model }; }
+    if (format === 'pdf') { const pdf = await generatePdf(outputData.content); pendingOutputRequests.delete(userId); return { success: true, content: pdf.success ? `📄 PDF: ${pdf.url}` : `Gagal: ${pdf.error}`, model: outputData.model }; }
+    if (format === 'docx') { const docx = await generateDocx(outputData.content); pendingOutputRequests.delete(userId); return { success: true, content: docx.success ? `📝 DOCX: ${docx.url}` : `Gagal: ${docx.error}`, model: outputData.model }; }
   }
   
   try {
@@ -859,43 +482,26 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
     if (cached) return cached;
     
     let searchResults = null;
-    if (CONFIG.searchKeywords.some(k => message.toLowerCase().includes(k))) {
-      searchResults = await searchWeb(message);
-    }
-    
-    const { model: selectedModel } = selectModel(level, message);
-    const budgetOk = await checkBudget(userId, 0.001);
-    if (!budgetOk.allowed) {
-      return { success: true, content: "Maaf, kuota harian Anda telah habis.", model: 'system' };
-    }
-    
+    if (CONFIG.searchKeywords.some(k => message.toLowerCase().includes(k))) searchResults = await searchWeb(message);
+    const { model: selectedModel } = selectModel(level);
     const history = await getChatHistory(userId, platform, 10);
     const systemPrompt = await buildSystemPrompt(level, userId, message);
     const messages = [{ role: 'system', content: systemPrompt }];
     for (const h of history) messages.push({ role: h.role, content: h.content });
-    
     let finalMessage = message;
-    if (searchResults?.length) {
-      finalMessage += `\n\n[Hasil pencarian]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
-    }
+    if (searchResults?.length) finalMessage += `\n\n[Hasil pencarian]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
     messages.push({ role: 'user', content: finalMessage });
-    
-    const isArticle = (level === 'sd_smp' || level === 'sma') && 
-      (message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan'));
-    
+    const isArticle = (level === 'sd_smp' || level === 'sma') && (message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan'));
     result = await callWithFallback(selectedModel, messages, level, isArticle);
-    
     await saveChatMessage(userId, platform, 'user', message, selectedModel);
     await saveChatMessage(userId, platform, 'assistant', result.content, result.model);
     await setCache(cacheKey, result, 3600);
-    
-    await updateSummaryCache(userId, `Q: ${message.substring(0, 100)}...\nA: ${result.content.substring(0, 100)}...`, platform);
-    
+    await updateSummaryCache(userId, `Q: ${message.substring(0,100)}...\nA: ${result.content.substring(0,100)}...`, platform);
     logger.info(`✅ Completed in ${Date.now() - startTime}ms`);
     return result;
   } catch (error) {
     logger.error('Process error:', error);
-    return result || { success: true, content: "Maaf, terjadi kesalahan. Silakan coba lagi.", model: 'system' };
+    return result || { success: true, content: "Maaf, terjadi kesalahan.", model: 'system' };
   }
 }
 
@@ -904,23 +510,11 @@ async function processChat(userId, platform, level, message, imageUrl = null) {
 // ============================================
 async function sendTelegramMessage(chatId, text) {
   if (!CONFIG.telegram.token) return;
-  try {
-    await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
-      chat_id: chatId,
-      text: text.substring(0, 4096),
-      parse_mode: 'Markdown'
-    });
-  } catch (err) {}
+  try { await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, { chat_id: chatId, text: text.substring(0,4096), parse_mode: 'Markdown' }); } catch(e) {}
 }
-
 async function sendTelegramTyping(chatId) {
   if (!CONFIG.telegram.token) return;
-  try {
-    await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, {
-      chat_id: chatId,
-      action: 'typing'
-    });
-  } catch (err) {}
+  try { await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, { chat_id: chatId, action: 'typing' }); } catch(e) {}
 }
 
 app.post('/webhook/telegram', async (req, res) => {
@@ -928,59 +522,33 @@ app.post('/webhook/telegram', async (req, res) => {
   try {
     const update = req.body;
     if (!update?.message) return;
-    
     const chatId = update.message.chat.id;
     const userId = update.message.from.id.toString();
     const text = update.message.text || '';
     const platform = 'telegram';
-    
-    // Cek apakah ada foto (gambar)
     let imageUrl = null;
     if (update.message.photo && update.message.photo.length > 0) {
-      const photo = update.message.photo[update.message.photo.length - 1];
-      const fileId = photo.file_id;
-      const fileInfo = await axios.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getFile?file_id=${fileId}`);
+      const photo = update.message.photo[update.message.photo.length-1];
+      const fileInfo = await axios.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getFile?file_id=${photo.file_id}`);
       imageUrl = `https://api.telegram.org/file/bot${CONFIG.telegram.token}/${fileInfo.data.result.file_path}`;
     }
-    
     if (text.startsWith('/')) {
       const cmd = text.split(' ')[0].toLowerCase();
-      
-      if (cmd === '/start') {
-        await sendTelegramMessage(chatId, getLevelInfoText());
-        return;
-      }
-      
+      if (cmd === '/start') { await sendTelegramMessage(chatId, getLevelInfoText()); return; }
       let level = null;
       if (cmd === '/level_sd' || cmd === '/levelsdsmp') level = 'sd_smp';
       else if (cmd === '/level_sma' || cmd === '/levelsma') level = 'sma';
       else if (cmd === '/level_mahasiswa' || cmd === '/levelmahasiswa') level = 'mahasiswa';
       else if (cmd === '/level_dosen' || cmd === '/leveldosen') level = 'dosen_politikus';
-      
-      if (level) {
-        await setUserLevel(userId, platform, level);
-        await setUserChosenLevel(userId, platform, true);
-        await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - ${CONFIG.levelPrices[level]}\nSekarang kirim pertanyaan Anda!`);
-        return;
-      }
-      
-      if (cmd === '/format_text' || cmd === '/format_pdf' || cmd === '/format_docx') {
-        const result = await processChat(userId, platform, 'sma', text, null);
-        await sendTelegramMessage(chatId, result.content);
-        return;
-      }
-      
+      if (level) { await setUserLevel(userId, platform, level); await setUserChosenLevel(userId, platform, true); await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - ${CONFIG.levelPrices[level]}\nSekarang kirim pertanyaan!`); return; }
       await sendTelegramMessage(chatId, 'Perintah tidak dikenal. Gunakan /start');
       return;
     }
-    
-    if (!await hasUserChosenLevel(userId, platform)) {
-      await sendTelegramMessage(chatId, getLevelInfoText());
-      return;
-    }
-    
+    if (!await hasUserChosenLevel(userId, platform)) { await sendTelegramMessage(chatId, getLevelInfoText()); return; }
     const userLevel = await getUserLevel(userId, platform);
-    await sendTelegramTyping(chatId);
+    await sendTelegramTyping(chatId
+        await sendTelegramTyping(chatId);
+    const userLevel = await getUserLevel(userId, platform);
     const result = await processChat(userId, platform, userLevel, text, imageUrl);
     await sendTelegramMessage(chatId, result.content);
     
@@ -1037,55 +605,41 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // ============================================
-// ENDPOINT GENERATE GAMBAR (Google Gemini Free Tier)
+// GENERATE GAMBAR (Google Gemini Free Tier)
 // ============================================
 app.post('/api/generate-image', async (req, res) => {
   const { prompt, aspectRatio = '1:1' } = req.body;
   if (!prompt) return res.status(400).json({ error: 'prompt required' });
   
-  // Gunakan Google Gemini (gratis) untuk generate gambar
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: 'Gemini API key not configured. Get free key from https://aistudio.google.com/' });
   }
   
   try {
-    // Gemini tidak bisa generate gambar, jadi kita gunakan fallback ke prompt
-    // Tapi kita bisa generate gambar menggunakan Imagen atau return prompt
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{ text: `Generate a detailed image prompt for: ${prompt}. Return only the prompt text.` }]
-        }]
-      }
+      { contents: [{ parts: [{ text: `Generate a detailed image prompt for: ${prompt}. Return only the prompt text.` }] }] }
     );
-    
     const enhancedPrompt = response.data.candidates?.[0]?.content?.parts?.[0]?.text || prompt;
-    
-    // Untuk gambar, kita kembalikan prompt yang bisa digunakan user di Midjourney/DALL-E
-    res.json({ 
-      success: true, 
-      enhancedPrompt: enhancedPrompt,
-      message: 'Gambar tidak bisa digenerate langsung dengan Gemini. Gunakan prompt ini di DALL-E atau Midjourney.',
-      suggestion: `Generate image with: "${enhancedPrompt}"`
-    });
+    res.json({ success: true, enhancedPrompt: enhancedPrompt, message: 'Gunakan prompt ini di DALL-E atau Midjourney untuk generate gambar.' });
   } catch (err) {
     logger.error('Gemini error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Endpoint render LaTeX
+// ============================================
+// RENDER LATEX
+// ============================================
 app.post('/api/render-latex', async (req, res) => {
   const { latex } = req.body;
   if (!latex) return res.status(400).json({ error: 'latex required' });
-  
-  const result = await renderLatex(latex);
-  if (result.success) {
-    res.json({ success: true, imageUrl: result.imageUrl });
-  } else {
-    res.status(500).json({ success: false, error: result.error });
+  try {
+    const response = await axios.post(IMAGE_CONFIG.latexRendererUrl, { latex: latex, format: 'png', dpi: 120 }, { timeout: 10000 });
+    res.json({ success: true, imageUrl: response.data.url });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1140,7 +694,7 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// CLEANUP
+// CLEANUP CRON
 // ============================================
 cron.schedule('0 * * * *', async () => {
   logger.info('🧹 Running cleanup...');
