@@ -49,7 +49,7 @@ const CONFIG = {
     deepseekV32: {
       url: 'https://api.deepseek.com/v1/chat/completions',
       key: process.env.DEEPSEEK_API_KEY,
-      model: 'deepseek-v3.2',
+      model: 'deepseek-chat',
       pricePer1KInput: 0.002,
       pricePer1KOutput: 0.003,
       timeout: 60000
