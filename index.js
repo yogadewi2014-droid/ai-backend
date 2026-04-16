@@ -115,90 +115,78 @@ const CONFIG = {
 };
 
 // ============================================
-// GAYA JAWABAN PER LEVEL (DENGAN IDENTITAS YENNI)
+// GAYA JAWABAN PER LEVEL (HANYA maxTokens, temperature, requireFollowUp)
 // ============================================
 const answerStyle = {
   sd_smp: {
-    systemPrompt: `Anda adalah YENNI, sahabat AI untuk siswa SD/SMP yang ramah dan ceria.
-
-IDENTITAS:
-- Nama: YENNI
-- Panggilan: Sahabat AI
-- Sifat: Ramah, ceria, sabar seperti kakak kelas
-
-ATURAN SAPAAN & IDENTITAS:
-- Jika user menyapa (hai, halo, hello, assalamualaikum, salam sejahtera, om swastiastu, dll), jawab dengan salam yang sesuai + "Hai! 👋 Aku Yenni, sahabat AI kamu. Ada yang bisa aku bantu belajar hari ini? 🌟"
-- Jika user bertanya "siapa kamu" atau "nama kamu", jawab: "Aku Yenni! Sahabat AI yang siap bantu kamu belajar. Senang berkenalan denganmu! 😊"
-
-ATURAN UMUM:
-- Jawab MAKSIMAL 3 KALIMAT
-- Pakai bahasa sederhana seperti bicara dengan anak kecil
-- Beri 1 emoji di akhir
-- WAJIB akhiri dengan: "Mau penjelasan lebih detail? Ketik 'detail' ya!"`,
-    maxTokens: 150,
-    temperature: 0.5
+    maxTokens: 200,
+    maxTokensDetail: 300,
+    temperature: 0.5,
+    requireFollowUp: true
   },
   sma: {
-    systemPrompt: `Anda adalah YENNI, asisten belajar untuk siswa SMA yang kompeten dan friendly.
-
-IDENTITAS:
-- Nama: YENNI
-- Panggilan: Asisten Belajar
-- Sifat: Kompeten, jelas, tidak bertele-tele
-
-ATURAN SAPAAN & IDENTITAS:
-- Jika user menyapa, jawab: "Halo! 👋 Yenni di sini, siap bantu belajar. Ada yang mau ditanyakan? 📚"
-- Jika user bertanya identitas, jawab: "Saya Yenni, asisten belajar AI kamu. Senang membantu! 😊"
-
-ATURAN UMUM:
-- Jawab MAKSIMAL 5 KALIMAT
-- Beri 1 contoh konkret jika relevan
-- Jangan bertele-tele, langsung ke inti
-- Akhiri dengan: "Butuh contoh soal? Ketik 'contoh'."`,
-    maxTokens: 200,
-    temperature: 0.5
+    maxTokens: 250,
+    temperature: 0.5,
+    requireFollowUp: true
   },
   mahasiswa: {
-    systemPrompt: `Anda adalah YENNI, asisten riset untuk mahasiswa yang kredibel dan natural.
-
-IDENTITAS:
-- Nama: YENNI
-- Panggilan: Asisten Riset
-- Sifat: Analitis, kritis, tidak kaku
-
-ATURAN SAPAAN & IDENTITAS:
-- Jika user menyapa, jawab: "Halo. Saya Yenni, asisten riset. Ada topik yang mau didiskusikan? 🎓"
-- Jika user bertanya identitas, jawab: "Saya Yenni, asisten AI untuk riset dan studi akademis. Silakan bertanya."
-
-ATURAN UMUM:
-- Jawab MAKSIMAL 7 KALIMAT atau 1-2 paragraf pendek
-- Langsung ke inti, tanpa basa-basi
-- Sertakan 1 referensi kunci jika relevan
-- Tawarkan: "Ingin saya elaborasi lebih lanjut?"`,
-    maxTokens: 300,
-    temperature: 0.6
+    maxTokens: 400,
+    temperature: 0.6,
+    requireFollowUp: false
   },
   dosen_politikus: {
-    systemPrompt: `Anda adalah YENNI, pakar kebijakan dan analis strategis.
-
-IDENTITAS:
-- Nama: YENNI
-- Panggilan: Analis Strategis
-- Sifat: Formal, berwibawa, data-driven
-
-ATURAN SAPAAN & IDENTITAS:
-- Jika user menyapa, jawab: "Selamat ${getTimeOfDay()}. Saya Yenni, siap membantu analisis Anda. 📊"
-- Jika user bertanya identitas, jawab: "Saya Yenni, AI asisten untuk analisis kebijakan dan kajian akademis."
-
-ATURAN UMUM:
-- Jawab MAKSIMAL 5 KALIMAT PADAT
-- PRIORITAS: data, implikasi, rekomendasi
-- HINDARI penjelasan dasar, anggap user sudah paham
-- Langsung ke poin: masalah → dampak → solusi`,
-    maxTokens: 250,
-    temperature: 0.6
+    maxTokens: 2000,
+    temperature: 0.7,
+    requireFollowUp: false
   }
 };
+
+// ============================================
+// BASE SYSTEM PROMPT (RINGKAS & HEMAT TOKEN)
+// ============================================
+const basePrompts = {
+  sd_smp: `Anda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Salam netral "Halo". Akhiri "Ada yang mau ditanya lagi?". JANGAN sebut agama, Tuhan, "Amin".`,
+  sma: `Anda guru SMA. Jawab 5 kalimat. Beri contoh. Salam "Halo". Akhiri "Butuh contoh soal?". JANGAN sebut agama.`,
+  mahasiswa: `Anda asisten riset. Jawab 7 kalimat. Sertakan 1 referensi. Salam "Halo". JANGAN sentuh agama kecuali diminta.`,
+  dosen_politikus: `Anda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi. Salam "Selamat pagi/siang/sore". JANGAN bahas agama kecuali relevan.`
+};
+
+// ============================================
+// INSTRUKSI KHUSUS (HANYA DIPANGGIL JIKA DIPERLUKAN - HEMAT TOKEN!)
+// ============================================
+const specialInstructions = {
+  mahasiswa_journal: `\n\nFORMAT JURNAL: Judul max 15 kata. Abstrak 200-250 kata (latar→tujuan→metode→hasil→kesimpulan). Pendahuluan (state of the art + gap). Tinjauan pustaka (80% jurnal). Metode. Hasil & pembahasan. Kesimpulan. Daftar pustaka APA 7th.`,
+  dosen_sinta: `\n\nFORMAT JURNAL SINTA: Judul max 12 kata. Abstrak Indonesia & Inggris max 250 kata. Pendahuluan (latar+state of the art+gap). Tinjauan pustaka (minimal 20 referensi, 80% jurnal). Metode. Hasil & pembahasan. Kesimpulan. Daftar pustaka minimal 25 referensi. Ceklist: turnitin≤20%.`,
+  dosen_speech: `\n\nFORMAT PIDATO: Pembukaan 15% (salam→sapaan→emosi→tujuan). Isi 70%: Logos 30% (data), Pathos 40% (cerita+emosi+[Jeda]), Ethos 10%. Penutup 15% (rangkuman→ajakan→penutup kuat). Gunakan kata "KITA".`
+};
+
+// ============================================
+// FUNGSI MEMBANGUN SYSTEM PROMPT (HEMAT TOKEN!)
+// ============================================
+function buildSystemPrompt(level, userMessage) {
+  let prompt = basePrompts[level] || basePrompts.sma;
+  const lowerMsg = userMessage.toLowerCase();
+  
+  // Hanya tambahkan instruksi khusus JIKA user memintanya
+  if (level === 'mahasiswa') {
+    if (lowerMsg.includes('artikel jurnal') || lowerMsg.includes('paper') || 
+        lowerMsg.includes('skripsi') || lowerMsg.includes('tesis')) {
+      prompt += specialInstructions.mahasiswa_journal;
+    }
+  }
+  
+  if (level === 'dosen_politikus') {
+    if (lowerMsg.includes('sinta') || lowerMsg.includes('jurnal nasional') || lowerMsg.includes('publikasi')) {
+      prompt += specialInstructions.dosen_sinta;
+    }
+    else if (lowerMsg.includes('pidato') || lowerMsg.includes('speech') || 
+             lowerMsg.includes('orasi') || lowerMsg.includes('kampanye')) {
+      prompt += specialInstructions.dosen_speech;
+    }
+  }
+  
+  return prompt;
+}
 
 function getTimeOfDay() {
   const hour = new Date().getHours();
@@ -265,7 +253,7 @@ ${salam}
 /level_dosen - *Dosen/Politikus* (GPT-5)
    Biaya: ${CONFIG.levelPrices.dosen_politikus}
 
-Ketik perintah di atas (bisa dengan atau tanpa garis bawah, contoh: /level_sd atau /level_sd) untuk memilih level.
+Ketik perintah di atas (contoh: /level_sd) untuk memilih level.
 
 Salam hangat, **Yenni - Sahabat AI Anda** 💙
 `;
@@ -277,14 +265,14 @@ Salam hangat, **Yenni - Sahabat AI Anda** 💙
 function getGreetingResponse(text, level) {
   const lowerText = text.toLowerCase().trim();
   
-  const greetings = [
+  const greetingsList = [
     'hai', 'hello', 'halo', 'hi', 'hey',
     'assalamualaikum', 'salam', 'selamat pagi', 'selamat siang', 'selamat malam',
     'om swastiastu', 'salam sejahtera', 'wei de dong tian'
   ];
   const askingWho = ['siapa kamu', 'siapa anda', 'nama kamu', 'nama anda', 'kenalan dong', 'perkenalkan', 'yenni'];
   
-  const isGreeting = greetings.some(g => lowerText.includes(g));
+  const isGreeting = greetingsList.some(g => lowerText.includes(g));
   const isAskingWho = askingWho.some(q => lowerText.includes(q));
   
   if (isGreeting || isAskingWho || (text.length < 15 && isGreeting)) {
@@ -477,7 +465,7 @@ async function getChatHistory(userId, platform, limit = 10) {
 }
 
 // ============================================
-// PROSES CHAT UTAMA
+// PROSES CHAT UTAMA (DENGAN SYSTEM PROMPT HEMAT TOKEN)
 // ============================================
 async function processChat(userId, platform, level, message) {
   const startTime = Date.now();
@@ -508,8 +496,11 @@ async function processChat(userId, platform, level, message) {
     }
     
     const history = await getChatHistory(userId, platform, 10);
-    const style = answerStyle[level] || answerStyle.sma;
-    const messages = [{ role: 'system', content: style.systemPrompt }];
+    
+    // 🔥 SYSTEM PROMPT HEMAT TOKEN (menggunakan fungsi buildSystemPrompt)
+    const systemPrompt = buildSystemPrompt(level, message);
+    const messages = [{ role: 'system', content: systemPrompt }];
+    
     for (const h of history) messages.push({ role: h.role, content: h.content });
     let finalMessage = message;
     if (searchResults?.length) {
@@ -549,6 +540,18 @@ async function sendTelegramMessage(chatId, text) {
   } catch (err) {}
 }
 
+async function sendTelegramTyping(chatId) {
+  if (!CONFIG.telegram.token) return;
+  try {
+    await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendChatAction`, {
+      chat_id: chatId,
+      action: 'typing'
+    });
+  } catch (err) {
+    console.log('[Telegram] Typing indicator error:', err.message);
+  }
+}
+
 app.post('/webhook/telegram', async (req, res) => {
   res.status(200).send('OK');
   try {
@@ -569,7 +572,7 @@ app.post('/webhook/telegram', async (req, res) => {
       }
       
       let level = null;
-      if (cmd === '/level_sd' || cmd === '/level_sd') level = 'sd_smp';
+      if (cmd === '/level_sd' || cmd === '/level_sd' || cmd === '/levelsdsmp') level = 'sd_smp';
       else if (cmd === '/level_sma' || cmd === '/levelsma') level = 'sma';
       else if (cmd === '/level_mahasiswa' || cmd === '/levelmahasiswa') level = 'mahasiswa';
       else if (cmd === '/level_dosen' || cmd === '/leveldosen') level = 'dosen_politikus';
@@ -599,6 +602,7 @@ app.post('/webhook/telegram', async (req, res) => {
     }
     
     const userLevel = getUserLevel(userId, platform);
+    await sendTelegramTyping(chatId);
     const result = await processChat(userId, platform, userLevel, text);
     await sendTelegramMessage(chatId, result.content);
     
@@ -735,7 +739,7 @@ app.listen(PORT, () => {
 ║  ✅ Server running on port ${PORT}                                                ║
 ║  ✅ Identitas: YENNI (Sahabat AI)                                           ║
 ║  ✅ Salam semua agama Indonesia (random setiap /start)                       ║
-║  ✅ Command level: support /level_sd ATAU /level_sd                          ║
+║  ✅ HEMAT TOKEN: System prompt ringkas, instruksi khusus hanya jika perlu    ║
 ║  ✅ Harga API 2026 (SD-SMP: Rp4/chat)                                        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
   `);
