@@ -544,11 +544,13 @@ app.post('/webhook/telegram', async (req, res) => {
       await sendTelegramMessage(chatId, 'Perintah tidak dikenal. Gunakan /start');
       return;
     }
-    if (!await hasUserChosenLevel(userId, platform)) { await sendTelegramMessage(chatId, getLevelInfoText()); return; }
+        if (!await hasUserChosenLevel(userId, platform)) {
+      await sendTelegramMessage(chatId, getLevelInfoText());
+      return;
+    }
+    
     const userLevel = await getUserLevel(userId, platform);
-    await sendTelegramTyping(chatId
-        await sendTelegramTyping(chatId);
-    const userLevel = await getUserLevel(userId, platform);
+    await sendTelegramTyping(chatId);
     const result = await processChat(userId, platform, userLevel, text, imageUrl);
     await sendTelegramMessage(chatId, result.content);
     
