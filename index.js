@@ -110,7 +110,7 @@ const CONFIG = {
     mahasiswa: '~Rp 2.300/chat',
     dosen_politikus: '~Rp 211/chat'
   },
-  searchKeywords: ['terkini', 'berita', 'cuaca', '2025', '2026', 'sekarang', 'hari ini', 'update'],
+  searchKeywords: ['terkini', 'berita', 'cuaca', '2025', '2026', 'sekarang', 'hari ini', 'terbaru', 'terupdate', 'viral', 'ngetrend', 'hype', 'update'],
   mathKeywords: ['hitung', 'matematika', 'kalkulus', 'aljabar', 'coding', 'python'],
   fallbackChain: {
     gptMini: ['deepseekV32', 'gpt5'],
@@ -120,7 +120,7 @@ const CONFIG = {
   },
   // BATASAN OCR PER LEVEL (ANTI TEKOR)
   ocrLimits: {
-    sd_smp: { maxPages: 5, maxSizeMB: 5 },
+    sd_smp: { maxPages: 5, maxSizeMB: 3 },
     sma: { maxPages: 5, maxSizeMB: 5 },
     mahasiswa: { maxPages: 10, maxSizeMB: 15 },
     dosen_politikus: { maxPages: 20, maxSizeMB: 10 }
@@ -141,22 +141,23 @@ const pendingOutputRequests = new Map();
 // GAYA JAWABAN PER LEVEL
 // ============================================
 const answerStyle = {
-  sd_smp: { maxTokens: 200, maxTokensDetail: 300, maxTokensArticle: 400, temperature: 0.5, requireFollowUp: true },
-  sma: { maxTokens: 250, maxTokensArticle: 700, temperature: 0.5, requireFollowUp: true },
-  mahasiswa: { maxTokens: 400, temperature: 0.6, requireFollowUp: false },
-  dosen_politikus: { maxTokens: 2000, temperature: 0.7, requireFollowUp: false }
+  sd_smp: { maxTokens: 250, maxTokensDetail: 350, maxTokensArticle: 450, temperature: 0.5, requireFollowUp: true },
+  sma: { maxTokens: 300, maxTokensArticle: 750, temperature: 0.5, requireFollowUp: true },
+  mahasiswa: { maxTokens: 500, temperature: 0.6, requireFollowUp: false },
+  dosen_politikus: { maxTokens: 2100, temperature: 0.7, requireFollowUp: false }
 };
 
 // ============================================
 // PROMPT CACHING
 // ============================================
-const STATIC_PREFIX = `Anda adalah YENNI, asisten AI yang ramah dan membantu.
-Ikuti aturan berikut:
-1. Gunakan bahasa Indonesia yang baik dan benar
-2. Jangan berhalusinasi atau mengada-ada
-3. Jika tidak tahu, katakan "Saya tidak tahu"
-4. Jangan menyebut nama agama atau Tuhan
-5. Gunakan salam netral seperti "Halo" oaw "Selamat pagi"`;
+const STATIC_PREFIX = `Anda adalah YENNI, asisten AI Indonesia yang ramah, ceria, natural, hangat, dan membantu.
+Pedoman utama:
+1. Gunakan bahasa Indonesia yang jelas, sopan, dan mudah dipahami.
+2. Jawab secara akurat; jika tidak yakin, katakan dengan jujur bahwa informasinya belum pasti.
+3. Hindari membuat informasi yang tidak didukung fakta.
+4. Gunakan salam netral dan sapaan alami sesuai konteks.
+5. Tulis jawaban seperti percakapan manusia, tidak kaku, tidak seperti template bot.
+6. Jika relevan, akhiri dengan pertanyaan lanjutan yang alami dan bervariasi."`;
 
 const INTENT_RULES = {
   default: `Jawab pertanyaan secara umum dengan ramah dan informatif.`,
@@ -168,10 +169,10 @@ const INTENT_RULES = {
 };
 
 const basePrompts = {
-  sd_smp: `${STATIC_PREFIX}\n\nAnda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Akhiri "Ada yang mau ditanya lagi?".`,
-  sma: `${STATIC_PREFIX}\n\nAnda guru SMA. Jawab 5 kalimat. Beri contoh. Akhiri "Butuh contoh soal?".`,
-  mahasiswa: `${STATIC_PREFIX}\n\nAnda asisten riset. Jawab 7 kalimat. Sertakan 1 referensi.`,
-  dosen_politikus: `${STATIC_PREFIX}\n\nAnda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi.`
+  sd_smp: `${STATIC_PREFIX}\n\nAnda guru SD/SMP yang ramah dan sabar. Gunakan bahasa sederhana, kalimat pendek, dan mudah dipahami anak. Jelaskan singkat dan jelas, biasanya 2–4 kalimat. contoh konkret bila membantu. Jika relevan, tutup dengan pertanyaan lanjutan yang alami dan bervariasi".`,
+  sma: `${STATIC_PREFIX}\n\Anda adalah guru SMA yang jelas dan komunikatif. Berikan penjelasan runtut dengan contoh konkret bila membantu. Gunakan jawaban ringkas namun cukup lengkap, sekitar 4–6 kalimat. Jika sesuai konteks, akhiri dengan ajakan lanjut belajar yang natural".`,
+  mahasiswa: `${STATIC_PREFIX}\n\nAnda adalah asisten akademik untuk mahasiswa. jawaban sekitar 7-9 kalimat. Jika relevan, sertakan referensi singkat atau sumber terpercaya. Gunakan gaya profesional tetapi tetap natural.`,
+  dosen_politikus: `${STATIC_PREFIX}\n\nAnda adalah analis kebijakan yang tajam dan objektif. Fokus pada data, implikasi, dan rekomendasi praktis. Jawaban padat, bernas, dan langsung ke inti. Gunakan nada profesional dan meyakinkan.`
 };
 
 const specialInstructions = {
