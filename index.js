@@ -522,15 +522,27 @@ app.post('/webhook/telegram', async (req, res) => {
   try {
     const update = req.body;
     if (!update?.message) return;
+    
+    // ========== LOG UNTUK DEBUG ==========
+    console.log(`📨 [WEBHOOK] Pesan dari ${update.message.from.id}: "${update.message.text || '[GAMBAR]'}"`);
+    
     const chatId = update.message.chat.id;
     const userId = update.message.from.id.toString();
     const text = update.message.text || '';
     const platform = 'telegram';
     let imageUrl = null;
+    
+    // ========== LOG DETEKSI GAMBAR ==========
+    console.log(`📸 [DEBUG] Cek foto: ada? ${!!update.message.photo}, jumlah: ${update.message.photo?.length || 0}`);
+    
     if (update.message.photo && update.message.photo.length > 0) {
+      console.log(`📸 GAMBAR DETEKSI! Jumlah foto: ${update.message.photo.length}`);
       const photo = update.message.photo[update.message.photo.length-1];
       const fileInfo = await axios.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getFile?file_id=${photo.file_id}`);
       imageUrl = `https://api.telegram.org/file/bot${CONFIG.telegram.token}/${fileInfo.data.result.file_path}`;
+      console.log(`📸 URL GAMBAR: ${imageUrl}`);
+    } else {
+      console.log(`📸 TIDAK ADA GAMBAR - teks: "${text.substring(0, 50)}"`);
     }
     if (text.startsWith('/')) {
       const cmd = text.split(' ')[0].toLowerCase();
