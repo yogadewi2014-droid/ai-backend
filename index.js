@@ -1,7 +1,8 @@
 // ============================================
 // AI LEARNING BACKEND v3.0 - MULTI PLATFORM
 // Identitas: YENNI - Sahabat AI Anda
-// OPTIMASI: Novita OCR + Browserless PDF + Batasan per Level
+// OPTIMASI: Novita OCR + Batasan per Level
+// NOTE: Fitur PDF sementara dinonaktifkan
 // ============================================
 
 require('dotenv').config();
@@ -10,7 +11,6 @@ const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const { createClient: createRedisClient } = require('redis');
 const cron = require('node-cron');
-const puppeteer = require('puppeteer-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -156,7 +156,7 @@ Ikuti aturan berikut:
 2. Jangan berhalusinasi atau mengada-ada
 3. Jika tidak tahu, katakan "Saya tidak tahu"
 4. Jangan menyebut nama agama atau Tuhan
-5. Gunakan salam netral seperti "Halo" atau "Selamat pagi"`;
+5. Gunakan salam netral seperti "Halo" oaw "Selamat pagi"`;
 
 const INTENT_RULES = {
   default: `Jawab pertanyaan secara umum dengan ramah dan informatif.`,
@@ -350,69 +350,14 @@ async function searchWeb(query) {
 }
 
 // ============================================
-// GENERATE PDF DENGAN BROWSERLESS
+// GENERATE PDF (SEMENTARA DINONAKTIFKAN)
 // ============================================
-const BROWSER_WS_ENDPOINT = process.env.BROWSER_WS_ENDPOINT;
-
-async function generatePDFWithBrowserless(htmlContent, title) {
-  if (!BROWSER_WS_ENDPOINT) {
-    return { success: false, error: 'BROWSER_WS_ENDPOINT not configured' };
-  }
-  
-  let browser = null;
-  try {
-    browser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS_ENDPOINT });
-    const page = await browser.newPage();
-    
-    const fullHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>${title}</title>
-        <style>
-          body { font-family: 'Arial', sans-serif; padding: 40px; line-height: 1.6; max-width: 800px; margin: 0 auto; }
-          h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
-          h2 { color: #34495e; margin-top: 25px; }
-          pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
-          code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
-          table { border-collapse: collapse; width: 100%; margin: 15px 0; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background: #f2f2f2; }
-        </style>
-      </head>
-      <body>${htmlContent}</body>
-      </html>
-    `;
-    
-    await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
-    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' } });
-    await page.close();
-    return { success: true, buffer: pdfBuffer };
-    
-  } catch (err) {
-    console.error('Browserless PDF error:', err.message);
-    return { success: false, error: err.message };
-  }
-}
-
 async function generatePdf(content, title = 'Document') {
-  let htmlContent = content
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br>')
-    .replace(/^# (.*?)$/gm, '<h1>$1</h1>')
-    .replace(/^## (.*?)$/gm, '<h2>$1</h2>');
-  
-  const result = await generatePDFWithBrowserless(htmlContent, title);
-  if (result.success) {
-    return { success: true, buffer: result.buffer };
-  }
-  return { success: false, error: result.error };
+  return { success: false, error: 'Fitur PDF sedang dalam pengembangan. Gunakan format TEXT terlebih dahulu.' };
 }
 
 async function generateDocx(content, title = 'Document') {
-  return { success: false, error: 'DOCX generation not available, use PDF format' };
+  return { success: false, error: 'Fitur DOCX sedang dalam pengembangan.' };
 }
 
 // ============================================
@@ -517,7 +462,7 @@ function askForAcademicDetails(level, originalMessage) {
 }
 async function askOutputFormat(userId, content, model, level) {
   pendingOutputRequests.set(userId, { content, model, level });
-  return `✅ *Konten selesai!*\n\nPilih format:\n/format_text - Teks\n/format_pdf - PDF`;
+  return `✅ *Konten selesai!*\n\nPilih format:\n/format_text - Teks\n/format_pdf - PDF (coming soon)`;
 }
 async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
   if (!supabase) return;
@@ -599,7 +544,7 @@ async function processChat(userId, platform, level, message, imageUrl = null, is
     }
   }
   
-    if (message.startsWith('/format_')) {
+  if (message.startsWith('/format_')) {
     const format = message.replace('/format_', '').toLowerCase();
     const outputData = pendingOutputRequests.get(userId);
     if (!outputData) return { success: true, content: "Tidak ada konten. Buat artikel dulu.", model: 'system' };
@@ -612,23 +557,10 @@ async function processChat(userId, platform, level, message, imageUrl = null, is
     if (format === 'pdf') { 
       const pdf = await generatePdf(outputData.content, 'Yenni_Article');
       pendingOutputRequests.delete(userId);
-      
-      if (pdf.success && pdf.buffer) {
-        // Kirim file ke Telegram
-        const FormData = require('form-data');
-        const formData = new FormData();
-        formData.append('chat_id', chatId);
-        formData.append('document', pdf.buffer, { filename: 'article.pdf' });
-        await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendDocument`, formData, {
-          headers: { ...formData.getHeaders() }
-        });
-        return { success: true, content: '📄 PDF telah dikirim di atas.', model: outputData.model };
-      } else {
-        return { success: true, content: `Gagal buat PDF: ${pdf.error}`, model: 'system' };
-      }
+      return { success: true, content: pdf.success ? `📄 PDF: ${pdf.url}` : `📄 ${pdf.error}`, model: outputData.model };
     }
     
-    return { success: true, content: 'Format tidak dikenal. Gunakan /format_text atau /format_pdf', model: 'system' };
+    return { success: true, content: 'Format tidak dikenal. Gunakan /format_text', model: 'system' };
   }
   
   try {
@@ -941,10 +873,10 @@ app.listen(PORT, () => {
 ║  ✅ YENNI siap membantu! 🚀                                         ║
 ║  ✅ OCR: Novita AI (murah, $0.03/1M token)                         ║
 ║  ✅ Batasan PDF per level (5/5/10/20 halaman)                      ║
-║  ✅ Browserless PDF (hemat RAM)                                    ║
 ║  ✅ Session Cache (Redis/Memory)                                   ║
 ║  ✅ Long Term Memory (Supabase)                                    ║
-║  ✅ Academic Writing + Output PDF                                  ║
+║  ✅ Academic Writing + Output Text                                 ║
+║  ⚠️  Fitur PDF sementara dinonaktifkan (coming soon)               ║
 ╚════════════════════════════════════════════════════════════════════╝
   `);
 });
