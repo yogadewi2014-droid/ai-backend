@@ -13,8 +13,8 @@ const cron = require('node-cron');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ============================================
 // SALAM SEMUA AGAMA
@@ -111,6 +111,21 @@ const CONFIG = {
 };
 
 // ============================================
+// TAMBAHAN: KONFIGURASI GAMBAR & OUTPUT
+// ============================================
+const IMAGE_CONFIG = {
+  googleImagenApiKey: process.env.GOOGLE_IMAGEN_API_KEY,
+  googleImagenUrl: 'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict',
+  latexRendererUrl: process.env.LATEX_RENDERER_URL || 'https://latex.railway.app/render',
+  allowedImageTypes: ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'],
+  maxImageSize: 5 * 1024 * 1024
+};
+
+// Storage untuk menahan request academic writing dan output
+const pendingAcademicRequests = new Map();
+const pendingOutputRequests = new Map();
+
+// ============================================
 // GAYA JAWABAN PER LEVEL
 // ============================================
 const answerStyle = {
@@ -140,13 +155,33 @@ const answerStyle = {
 };
 
 // ============================================
-// BASE PROMPTS
+// PROMPT CACHING - STATIC PREFIX & INTENT RULES
+// ============================================
+const STATIC_PREFIX = `Anda adalah YENNI, asisten AI yang ramah dan membantu.
+Ikuti aturan berikut:
+1. Gunakan bahasa Indonesia yang baik dan benar
+2. Jangan berhalusinasi atau mengada-ada
+3. Jika tidak tahu, katakan "Saya tidak tahu"
+4. Jangan menyebut nama agama atau Tuhan
+5. Gunakan salam netral seperti "Halo" atau "Selamat pagi"`;
+
+const INTENT_RULES = {
+  default: `Jawab pertanyaan secara umum dengan ramah dan informatif.`,
+  article_sd: `BUAT ARTIKEL UNTUK SD/SMP: Maksimal 300 kata, bahasa sederhana, akhiri ajakan diskusi.`,
+  article_sma: `BUAT ARTIKEL UNTUK SMA: Maksimal 600 kata, bahasa jelas, beri contoh konkret.`,
+  journal: `BUAT ARTIKEL JURNAL: Judul, Abstrak, Pendahuluan, Metode, Hasil, Pembahasan, Kesimpulan, Daftar Pustaka.`,
+  sinta: `BUAT JURNAL SINTA: Judul max 12 kata, Abstrak Indonesia/Inggris max 250 kata, minimal 20 referensi.`,
+  speech: `BUAT PIDATO: Pembukaan 15%, Isi 70% (data+cerita), Penutup 15%, gunakan kata "KITA".`
+};
+
+// ============================================
+// BASE PROMPTS (DIPERKAYA DENGAN STATIC PREFIX)
 // ============================================
 const basePrompts = {
-  sd_smp: `Anda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Salam netral "Halo". Akhiri "Ada yang mau ditanya lagi?". JANGAN sebut agama.`,
-  sma: `Anda guru SMA. Jawab 5 kalimat. Beri contoh. Salam "Halo". Akhiri "Butuh contoh soal?". JANGAN sebut agama.`,
-  mahasiswa: `Anda asisten riset. Jawab 7 kalimat. Sertakan 1 referensi. Salam "Halo".`,
-  dosen_politikus: `Anda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi. Salam "Selamat pagi/siang/sore".`
+  sd_smp: `${STATIC_PREFIX}\n\nAnda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Akhiri "Ada yang mau ditanya lagi?".`,
+  sma: `${STATIC_PREFIX}\n\nAnda guru SMA. Jawab 5 kalimat. Beri contoh. Akhiri "Butuh contoh soal?".`,
+  mahasiswa: `${STATIC_PREFIX}\n\nAnda asisten riset. Jawab 7 kalimat. Sertakan 1 referensi.`,
+  dosen_politikus: `${STATIC_PREFIX}\n\nAnda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi.`
 };
 
 // ============================================
@@ -161,12 +196,48 @@ const specialInstructions = {
 };
 
 // ============================================
-// FUNGSI MEMBANGUN PROMPT
+// FUNGSI MEMBANGUN PROMPT DENGAN INTENT
 // ============================================
-function buildSystemPrompt(level, userMessage) {
+function getIntent(userMessage) {
+  const lowerMsg = userMessage.toLowerCase();
+  if (lowerMsg.includes('artikel') && (lowerMsg.includes('sd') || lowerMsg.includes('smp'))) return 'article_sd';
+  if (lowerMsg.includes('artikel') && lowerMsg.includes('sma')) return 'article_sma';
+  if (lowerMsg.includes('jurnal') || lowerMsg.includes('skripsi') || lowerMsg.includes('paper')) return 'journal';
+  if (lowerMsg.includes('sinta') || lowerMsg.includes('jurnal nasional')) return 'sinta';
+  if (lowerMsg.includes('pidato') || lowerMsg.includes('speech') || lowerMsg.includes('orasi')) return 'speech';
+  return 'default';
+}
+
+async function buildSystemPrompt(level, userId, userMessage) {
+  const intent = getIntent(userMessage);
   let prompt = basePrompts[level] || basePrompts.sma;
-  const lowerMsg = (userMessage || '').toLowerCase();
   
+  prompt += `\n\n${INTENT_RULES[intent] || INTENT_RULES.default}`;
+  
+  let longTermMemory = null;
+  if (supabase) {
+    const cacheKey = `longmem:${userId}`;
+    longTermMemory = await getCache(cacheKey);
+    if (!longTermMemory) {
+      try {
+        const { data } = await supabase
+          .from('long_term_memory')
+          .select('summary')
+          .eq('user_id', userId)
+          .single();
+        if (data?.summary) {
+          longTermMemory = data.summary;
+          await setCache(cacheKey, longTermMemory, 43200);
+        }
+      } catch (e) {}
+    }
+  }
+  
+  if (longTermMemory) {
+    prompt += `\n\nCatatan tentang pengguna: ${longTermMemory}`;
+  }
+  
+  const lowerMsg = userMessage.toLowerCase();
   const isAskingArticle = lowerMsg.includes('artikel') || lowerMsg.includes('tulisan') || lowerMsg.includes('buatkan');
   
   if (level === 'sd_smp' && isAskingArticle) prompt += specialInstructions.sd_smp_article;
@@ -187,25 +258,30 @@ function getTimeOfDay() {
 }
 
 // ============================================
-// PENYIMPANAN LEVEL USER
+// PENYIMPANAN LEVEL USER (DENGAN REDIS)
 // ============================================
 const userLevels = new Map();
 const userHasChosen = new Map();
 
-function getUserLevel(userId, platform) {
+async function getUserLevel(userId, platform) {
+  const sessionLevel = await getUserSession(userId, platform);
+  if (sessionLevel) return sessionLevel;
   return userLevels.get(`${userId}:${platform}`) || 'sd_smp';
 }
 
-function setUserLevel(userId, platform, level) {
+async function setUserLevel(userId, platform, level) {
+  await setUserSession(userId, platform, level);
   userLevels.set(`${userId}:${platform}`, level);
   console.log(`[LEVEL] ${platform}:${userId} → ${level}`);
 }
 
-function hasUserChosenLevel(userId, platform) {
+async function hasUserChosenLevel(userId, platform) {
+  const session = await getCache(`session:${userId}:${platform}`);
+  if (session) return true;
   return userHasChosen.get(`${userId}:${platform}`) || false;
 }
 
-function setUserChosenLevel(userId, platform, chosen = true) {
+async function setUserChosenLevel(userId, platform, chosen = true) {
   userHasChosen.set(`${userId}:${platform}`, chosen);
 }
 
@@ -264,7 +340,7 @@ if (CONFIG.supabase.url && CONFIG.supabase.key) {
 }
 
 // ============================================
-// CACHE
+// CACHE REDIS
 // ============================================
 let redisClient = null;
 let redisConnected = false;
@@ -303,6 +379,56 @@ async function setCache(key, data, ttlSeconds = 3600) {
     await redisClient.setEx(key, ttlSeconds, JSON.stringify(data));
   } else {
     memoryCache.set(key, { data, expiry: Date.now() + (ttlSeconds * 1000) });
+  }
+}
+
+async function delCache(key) {
+  if (redisConnected && redisClient) {
+    await redisClient.del(key);
+  } else {
+    memoryCache.delete(key);
+  }
+}
+
+// ============================================
+// SESSION CACHE (REDIS)
+// ============================================
+async function setUserSession(userId, platform, level) {
+  const key = `session:${userId}:${platform}`;
+  await setCache(key, { level, lastActive: Date.now() }, 86400);
+}
+
+async function getUserSession(userId, platform) {
+  const key = `session:${userId}:${platform}`;
+  const session = await getCache(key);
+  return session ? session.level : null;
+}
+
+async function clearUserSession(userId, platform) {
+  const key = `session:${userId}:${platform}`;
+  await delCache(key);
+}
+
+// ============================================
+// SUMMARY CACHE (REDIS)
+// ============================================
+async function setSummaryCache(userId, summary, platform = 'general') {
+  const key = `summary:${userId}:${platform}`;
+  await setCache(key, { summary, updatedAt: Date.now() }, 43200);
+}
+
+async function getSummaryCache(userId, platform = 'general') {
+  const key = `summary:${userId}:${platform}`;
+  const data = await getCache(key);
+  return data ? data.summary : null;
+}
+
+async function updateSummaryCache(userId, newSummary, platform = 'general') {
+  const existing = await getSummaryCache(userId, platform);
+  if (existing) {
+    await setSummaryCache(userId, `${existing}\n${newSummary}`, platform);
+  } else {
+    await setSummaryCache(userId, newSummary, platform);
   }
 }
 
@@ -362,6 +488,196 @@ async function searchWeb(query) {
 }
 
 // ============================================
+// FITUR INPUT GAMBAR (OCR dengan GPT Mini)
+// ============================================
+async function processImageInput(imageUrl, userQuestion, targetModel, level) {
+  try {
+    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    const base64Image = Buffer.from(imageResponse.data).toString('base64');
+    
+    const ocrMessages = [
+      { role: 'system', content: 'Anda adalah OCR. Ekstrak teks dari gambar ini. Jika ada soal matematika, tulis dalam format LaTeX. Jika ada diagram, jelaskan.' },
+      { role: 'user', content: [
+        { type: 'text', text: userQuestion || 'Ekstrak teks dari gambar ini:' },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+      ] }
+    ];
+    
+    const ocrResult = await callAI('gptMini', ocrMessages, 'sd_smp');
+    if (!ocrResult.success) return { success: false, error: 'Gagal membaca gambar' };
+    
+    const finalMessages = [
+      { role: 'system', content: `Anda adalah asisten AI. Analisis gambar berikut: ${ocrResult.content}. Jawab pertanyaan user dengan tepat.` },
+      { role: 'user', content: userQuestion || 'Jelaskan apa yang ada di gambar ini.' }
+    ];
+    
+    const finalResult = await callAI(targetModel, finalMessages, level);
+    return { success: true, content: finalResult.content, ocrText: ocrResult.content };
+  } catch (err) {
+    logger.error('Image processing error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================
+// FITUR GENERATE GAMBAR (Google Imagen API)
+// ============================================
+async function generateImage(prompt, aspectRatio = '1:1') {
+  if (!IMAGE_CONFIG.googleImagenApiKey) {
+    return { success: false, error: 'Google Imagen API key not configured' };
+  }
+  
+  try {
+    const response = await axios.post(
+      `${IMAGE_CONFIG.googleImagenUrl}?key=${IMAGE_CONFIG.googleImagenApiKey}`,
+      {
+        instances: [{ prompt: prompt }],
+        parameters: {
+          sampleCount: 1,
+          aspectRatio: aspectRatio,
+          safetyFilterLevel: 'block_only_high'
+        }
+      },
+      { timeout: 60000 }
+    );
+    
+    if (response.data?.predictions?.[0]?.bytesBase64Encoded) {
+      return { 
+        success: true, 
+        imageBase64: response.data.predictions[0].bytesBase64Encoded,
+        mimeType: 'image/png'
+      };
+    }
+    return { success: false, error: 'No image generated' };
+  } catch (err) {
+    logger.error('Image generation error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================
+// FITUR LATEX RENDERER
+// ============================================
+async function renderLatex(latexCode) {
+  try {
+    const response = await axios.post(IMAGE_CONFIG.latexRendererUrl, {
+      latex: latexCode,
+      format: 'png',
+      dpi: 120
+    }, { timeout: 10000 });
+    return { success: true, imageUrl: response.data.url };
+  } catch (err) {
+    logger.error('LaTeX render error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+function extractLatexFromText(text) {
+  const latexRegex = /\$\$(.*?)\$\$|\$(.*?)\$/gs;
+  const matches = [];
+  let match;
+  while ((match = latexRegex.exec(text)) !== null) {
+    matches.push(match[1] || match[2]);
+  }
+  return matches;
+}
+
+// ============================================
+// FITUR ACADEMIC WRITING HOLDER
+// ============================================
+function isAcademicWritingRequest(message, level) {
+  if (level !== 'mahasiswa' && level !== 'dosen_politikus') return false;
+  
+  const keywords = [
+    'artikel', 'jurnal', 'paper', 'skripsi', 'tesis', 'disertasi',
+    'karya ilmiah', 'essay', 'makalah', 'review', 'literature review',
+    'proposal', 'penelitian', 'studi literatur'
+  ];
+  return keywords.some(k => message.toLowerCase().includes(k));
+}
+
+function askForAcademicDetails(level, originalMessage) {
+  const questions = {
+    mahasiswa: `📝 *Saya akan bantu buat ${originalMessage.substring(0, 50)}...*
+
+Mohon berikan detail berikut agar artikelnya lebih berkualitas:
+
+1️⃣ *Topik utama*: Apa topik spesifik yang ingin dibahas?
+2️⃣ *Tujuan*: Untuk tugas kuliah, jurnal, atau publikasi?
+3️⃣ *Panjang*: Berapa halaman atau kata yang diharapkan?
+4️⃣ *Referensi*: Ada sumber atau gaya sitasi tertentu? (APA/MLA/Harvard)
+5️⃣ *Batasan*: Apakah ada aspek yang tidak boleh dibahas?
+
+Ketik *LANJUT* setelah mengisi detail di atas.`,
+    
+    dosen_politikus: `📊 *Academic Writing Assistant*
+
+Untuk menghasilkan artikel yang HIGH VALUE, saya perlu informasi:
+
+1️⃣ *Topik/Isu*: Judul atau fokus utama artikel
+2️⃣ *Jenis publikasi*: Jurnal SINTA, prosiding, buku, atau policy brief?
+3️⃣ *Target audiens*: Akademisi, praktisi, atau pembuat kebijakan?
+4️⃣ *Panjang naskah*: Berapa kata/halaman?
+5️⃣ *Referensi*: Apakah ada jurnal atau data spesifik yang harus disertakan?
+6️⃣ *Format*: IMRAD, essay, atau format khusus lainnya?
+
+Ketik *LANJUT* setelah mengisi detail.`
+  };
+  
+  return questions[level] || questions.mahasiswa;
+}
+
+// ============================================
+// FITUR OUTPUT FORMAT (Text/PDF/DOCX)
+// ============================================
+async function askOutputFormat(userId, content, model, level) {
+  pendingOutputRequests.set(userId, { content, model, level });
+  
+  return `✅ *Konten telah selesai dibuat!*
+
+Pilih format yang diinginkan:
+
+/format_text - Kirim sebagai teks biasa
+/format_pdf - Kirim sebagai file PDF
+/format_docx - Kirim sebagai file DOCX
+
+Ketik perintah di atas untuk memilih format.`;
+}
+
+async function generatePdf(content, title = 'Document') {
+  try {
+    const response = await axios.post('https://api.pdf.co/v1/pdf/convert/from/html', {
+      html: `<html><head><meta charset="UTF-8"></head><body><h1>${title}</h1>${content.replace(/\n/g, '<br>')}</body></html>`,
+      name: `${title}.pdf`,
+      margins: '20px'
+    }, {
+      headers: { 'x-api-key': process.env.PDF_CO_API_KEY },
+      timeout: 30000
+    });
+    return { success: true, url: response.data.url };
+  } catch (err) {
+    logger.error('PDF generation error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+async function generateDocx(content, title = 'Document') {
+  try {
+    const response = await axios.post('https://api.pdf.co/v1/docx/convert/from/html', {
+      html: `<html><head><meta charset="UTF-8"></head><body><h1>${title}</h1>${content.replace(/\n/g, '<br>')}</body></html>`,
+      name: `${title}.docx`
+    }, {
+      headers: { 'x-api-key': process.env.PDF_CO_API_KEY },
+      timeout: 30000
+    });
+    return { success: true, url: response.data.url };
+  } catch (err) {
+    logger.error('DOCX generation error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================
 // PANGGIL AI
 // ============================================
 async function callAI(modelName, messages, level = 'sma', timeoutMs = null, isArticle = false) {
@@ -382,6 +698,15 @@ async function callAI(modelName, messages, level = 'sma', timeoutMs = null, isAr
       headers: { 'Authorization': `Bearer ${model.key}` },
       timeout: timeoutMs || model.timeout || 30000
     });
+    
+    if (response.data.usage?.prompt_cache_hit_tokens) {
+      const hitTokens = response.data.usage.prompt_cache_hit_tokens;
+      const missTokens = response.data.usage.prompt_cache_miss_tokens;
+      const total = hitTokens + missTokens;
+      const hitRate = total > 0 ? (hitTokens / total) * 100 : 0;
+      console.log(`🔥 [${modelName}] Cache Hit Rate: ${hitRate.toFixed(1)}%`);
+    }
+    
     return { success: true, content: response.data.choices[0].message.content, model: modelName };
   } catch (err) {
     logger.error(`AI Error (${modelName}):`, err.message);
@@ -425,14 +750,107 @@ async function getChatHistory(userId, platform, limit = 10) {
 // ============================================
 // PROSES CHAT
 // ============================================
-async function processChat(userId, platform, level, message) {
+async function processChat(userId, platform, level, message, imageUrl = null) {
   const startTime = Date.now();
   let result = null;
   logger.info(`Processing: ${userId}, ${platform}, ${level}, ${message.substring(0, 50)}`);
   
+  // CEK GAMBAR (imageUrl tidak null)
+  if (imageUrl) {
+    let targetModel = 'gptMini';
+    if (level === 'sd_smp') targetModel = 'gptMini';
+    else if (level === 'sma') targetModel = 'deepseekV32';
+    else if (level === 'mahasiswa') targetModel = 'deepseekReasoning';
+    else if (level === 'dosen_politikus') targetModel = 'gpt5';
+    
+    const imageResult = await processImageInput(imageUrl, message, targetModel, level);
+    if (imageResult.success) {
+      return { success: true, content: imageResult.content, model: targetModel };
+    }
+    return { success: true, content: `Gagal memproses gambar: ${imageResult.error}`, model: 'system' };
+  }
+  
   const greetingResponse = getGreetingResponse(message, level);
   if (greetingResponse) {
     return { success: true, content: greetingResponse, model: 'system' };
+  }
+  
+  // CEK ACADEMIC WRITING (Tahan dulu, tanya detail)
+  const pendingKey = `${userId}:${platform}`;
+  const existingPending = pendingAcademicRequests.get(pendingKey);
+  
+  if (isAcademicWritingRequest(message, level) && !existingPending) {
+    pendingAcademicRequests.set(pendingKey, {
+      level,
+      platform,
+      originalMessage: message,
+      collectedDetails: null,
+      step: 'waiting_for_details'
+    });
+    
+    const askText = askForAcademicDetails(level, message);
+    return { success: true, content: askText, model: 'system', isAcademicHold: true
+      }
+  
+  // HANDLE RESPON DETAIL ACADEMIC (setelah user kirim detail)
+  const pendingRequest = pendingAcademicRequests.get(pendingKey);
+  if (pendingRequest && pendingRequest.step === 'waiting_for_details' && !message.startsWith('/')) {
+    if (message.toLowerCase().includes('lanjut')) {
+      pendingRequest.step = 'processing';
+      pendingAcademicRequests.set(pendingKey, pendingRequest);
+      
+      // Build prompt dengan detail yang sudah dikumpulkan
+      const detailPrompt = `Buatkan ${pendingRequest.originalMessage}\n\nDetail yang diberikan user:\n${pendingRequest.collectedDetails || message}\n\nBuatkan dengan kualitas tinggi, lengkap, dan sesuai standar akademik.`;
+      
+      let targetModel = pendingRequest.level === 'mahasiswa' ? 'deepseekReasoning' : 'gpt5';
+      const result = await callWithFallback(targetModel, [{ role: 'user', content: detailPrompt }], pendingRequest.level);
+      
+      pendingAcademicRequests.delete(pendingKey);
+      
+      // Tanya format output
+      const formatQuestion = await askOutputFormat(userId, result.content, result.model, pendingRequest.level);
+      return { success: true, content: `${result.content}\n\n${formatQuestion}`, model: result.model };
+    } else {
+      // Kumpulkan detail
+      pendingRequest.collectedDetails = pendingRequest.collectedDetails 
+        ? `${pendingRequest.collectedDetails}\n${message}` 
+        : message;
+      pendingAcademicRequests.set(pendingKey, pendingRequest);
+      return { success: true, content: "Terima kasih. Detail telah dicatat. Kirim *LANJUT* untuk mulai menulis artikel.", model: 'system' };
+    }
+  }
+  
+  // HANDLE FORMAT OUTPUT (PDF/DOCX/TEXT)
+  if (message.startsWith('/format_')) {
+    const format = message.replace('/format_', '').toLowerCase();
+    const outputData = pendingOutputRequests.get(userId);
+    
+    if (!outputData) {
+      return { success: true, content: "Tidak ada konten yang tersedia. Silakan buat artikel terlebih dahulu.", model: 'system' };
+    }
+    
+    if (format === 'text') {
+      pendingOutputRequests.delete(userId);
+      return { success: true, content: outputData.content, model: outputData.model };
+    }
+    
+    if (format === 'pdf') {
+      const pdfResult = await generatePdf(outputData.content, 'Academic_Article');
+      if (pdfResult.success) {
+        pendingOutputRequests.delete(userId);
+        return { success: true, content: `📄 PDF siap diunduh: ${pdfResult.url}`, model: outputData.model };
+      }
+      return { success: true, content: `Gagal buat PDF: ${pdfResult.error}`, model: 'system' };
+    }
+    
+    if (format === 'docx') {
+      const docxResult = await generateDocx(outputData.content, 'Academic_Article');
+      if (docxResult.success) {
+        pendingOutputRequests.delete(userId);
+        return { success: true, content: `📝 DOCX siap diunduh: ${docxResult.url}`, model: outputData.model };
+      }
+      return { success: true, content: `Gagal buat DOCX: ${docxResult.error}`, model: 'system' };
+    }
   }
   
   try {
@@ -452,7 +870,7 @@ async function processChat(userId, platform, level, message) {
     }
     
     const history = await getChatHistory(userId, platform, 10);
-    const systemPrompt = buildSystemPrompt(level, message);
+    const systemPrompt = await buildSystemPrompt(level, userId, message);
     const messages = [{ role: 'system', content: systemPrompt }];
     for (const h of history) messages.push({ role: h.role, content: h.content });
     
@@ -470,6 +888,8 @@ async function processChat(userId, platform, level, message) {
     await saveChatMessage(userId, platform, 'user', message, selectedModel);
     await saveChatMessage(userId, platform, 'assistant', result.content, result.model);
     await setCache(cacheKey, result, 3600);
+    
+    await updateSummaryCache(userId, `Q: ${message.substring(0, 100)}...\nA: ${result.content.substring(0, 100)}...`, platform);
     
     logger.info(`✅ Completed in ${Date.now() - startTime}ms`);
     return result;
@@ -514,6 +934,15 @@ app.post('/webhook/telegram', async (req, res) => {
     const text = update.message.text || '';
     const platform = 'telegram';
     
+    // Cek apakah ada foto (gambar)
+    let imageUrl = null;
+    if (update.message.photo && update.message.photo.length > 0) {
+      const photo = update.message.photo[update.message.photo.length - 1];
+      const fileId = photo.file_id;
+      const fileInfo = await axios.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getFile?file_id=${fileId}`);
+      imageUrl = `https://api.telegram.org/file/bot${CONFIG.telegram.token}/${fileInfo.data.result.file_path}`;
+    }
+    
     if (text.startsWith('/')) {
       const cmd = text.split(' ')[0].toLowerCase();
       
@@ -529,9 +958,15 @@ app.post('/webhook/telegram', async (req, res) => {
       else if (cmd === '/level_dosen' || cmd === '/leveldosen') level = 'dosen_politikus';
       
       if (level) {
-        setUserLevel(userId, platform, level);
-        setUserChosenLevel(userId, platform, true);
+        await setUserLevel(userId, platform, level);
+        await setUserChosenLevel(userId, platform, true);
         await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - ${CONFIG.levelPrices[level]}\nSekarang kirim pertanyaan Anda!`);
+        return;
+      }
+      
+      if (cmd === '/format_text' || cmd === '/format_pdf' || cmd === '/format_docx') {
+        const result = await processChat(userId, platform, 'sma', text, null);
+        await sendTelegramMessage(chatId, result.content);
         return;
       }
       
@@ -539,14 +974,14 @@ app.post('/webhook/telegram', async (req, res) => {
       return;
     }
     
-    if (!hasUserChosenLevel(userId, platform)) {
+    if (!await hasUserChosenLevel(userId, platform)) {
       await sendTelegramMessage(chatId, getLevelInfoText());
       return;
     }
     
-    const userLevel = getUserLevel(userId, platform);
+    const userLevel = await getUserLevel(userId, platform);
     await sendTelegramTyping(chatId);
-    const result = await processChat(userId, platform, userLevel, text);
+    const result = await processChat(userId, platform, userLevel, text, imageUrl);
     await sendTelegramMessage(chatId, result.content);
     
   } catch (err) {
@@ -568,37 +1003,90 @@ app.get('/api/levels', (req, res) => {
   });
 });
 
-app.get('/api/level/status/:userId', (req, res) => {
+app.get('/api/level/status/:userId', async (req, res) => {
   const { userId } = req.params;
   const { platform = 'website' } = req.query;
-  res.json({ userId, platform, hasChosen: hasUserChosenLevel(userId, platform), level: getUserLevel(userId, platform) });
+  res.json({ userId, platform, hasChosen: await hasUserChosenLevel(userId, platform), level: await getUserLevel(userId, platform) });
 });
 
-app.post('/api/level', (req, res) => {
+app.post('/api/level', async (req, res) => {
   const { userId, level, platform = 'website' } = req.body;
   const validLevels = ['sd_smp', 'sma', 'mahasiswa', 'dosen_politikus'];
   if (!userId || !level || !validLevels.includes(level)) {
     return res.status(400).json({ error: 'userId dan level required' });
   }
-  setUserLevel(userId, platform, level);
-  setUserChosenLevel(userId, platform, true);
+  await setUserLevel(userId, platform, level);
+  await setUserChosenLevel(userId, platform, true);
   res.json({ success: true, message: `Level changed to ${level}` });
 });
 
 app.post('/api/chat', async (req, res) => {
-  const { message, userId, level, platform = 'website' } = req.body;
+  const { message, userId, level, platform = 'website', imageUrl } = req.body;
   if (!message || !userId) return res.status(400).json({ error: 'message dan userId required' });
   
   let userLevel = level;
   if (!userLevel) {
-    if (!hasUserChosenLevel(userId, platform)) {
+    if (!await hasUserChosenLevel(userId, platform)) {
       return res.status(400).json({ error: 'Belum pilih level', message: 'Silakan pilih level via POST /api/level' });
     }
-    userLevel = getUserLevel(userId, platform);
+    userLevel = await getUserLevel(userId, platform);
   }
   
-  const result = await processChat(userId, platform, userLevel, message);
+  const result = await processChat(userId, platform, userLevel, message, imageUrl);
   res.json({ reply: result.content, model: result.model });
+});
+
+// ============================================
+// ENDPOINT GENERATE GAMBAR (Google Gemini Free Tier)
+// ============================================
+app.post('/api/generate-image', async (req, res) => {
+  const { prompt, aspectRatio = '1:1' } = req.body;
+  if (!prompt) return res.status(400).json({ error: 'prompt required' });
+  
+  // Gunakan Google Gemini (gratis) untuk generate gambar
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'Gemini API key not configured. Get free key from https://aistudio.google.com/' });
+  }
+  
+  try {
+    // Gemini tidak bisa generate gambar, jadi kita gunakan fallback ke prompt
+    // Tapi kita bisa generate gambar menggunakan Imagen atau return prompt
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{ text: `Generate a detailed image prompt for: ${prompt}. Return only the prompt text.` }]
+        }]
+      }
+    );
+    
+    const enhancedPrompt = response.data.candidates?.[0]?.content?.parts?.[0]?.text || prompt;
+    
+    // Untuk gambar, kita kembalikan prompt yang bisa digunakan user di Midjourney/DALL-E
+    res.json({ 
+      success: true, 
+      enhancedPrompt: enhancedPrompt,
+      message: 'Gambar tidak bisa digenerate langsung dengan Gemini. Gunakan prompt ini di DALL-E atau Midjourney.',
+      suggestion: `Generate image with: "${enhancedPrompt}"`
+    });
+  } catch (err) {
+    logger.error('Gemini error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Endpoint render LaTeX
+app.post('/api/render-latex', async (req, res) => {
+  const { latex } = req.body;
+  if (!latex) return res.status(400).json({ error: 'latex required' });
+  
+  const result = await renderLatex(latex);
+  if (result.success) {
+    res.json({ success: true, imageUrl: result.imageUrl });
+  } else {
+    res.status(500).json({ success: false, error: result.error });
+  }
 });
 
 // ============================================
@@ -607,7 +1095,7 @@ app.post('/api/chat', async (req, res) => {
 app.post('/webhook/whatsapp', async (req, res) => {
   res.status(200).send('OK');
   try {
-    const { from, message } = req.body;
+    const { from, message, imageUrl } = req.body;
     if (!from || !message) return;
     
     const userId = from;
@@ -620,19 +1108,19 @@ app.post('/webhook/whatsapp', async (req, res) => {
     else if (message === '/level_dosen') level = 'dosen_politikus';
     
     if (level) {
-      setUserLevel(userId, platform, level);
-      setUserChosenLevel(userId, platform, true);
+      await setUserLevel(userId, platform, level);
+      await setUserChosenLevel(userId, platform, true);
       console.log(`[WA] User ${from} set level to ${level}`);
       return;
     }
     
-    if (!hasUserChosenLevel(userId, platform)) {
+    if (!await hasUserChosenLevel(userId, platform)) {
       console.log(`[WA] User ${from} belum pilih level`);
       return;
     }
     
-    const userLevel = getUserLevel(userId, platform);
-    const result = await processChat(userId, platform, userLevel, message);
+    const userLevel = await getUserLevel(userId, platform);
+    const result = await processChat(userId, platform, userLevel, message, imageUrl);
     console.log(`[WA] Response to ${from}: ${result.content.substring(0, 100)}...`);
     
   } catch (err) {
@@ -672,6 +1160,16 @@ app.listen(PORT, () => {
 ╠════════════════════════════════════════════════════════════════════╣
 ║  ✅ Server running on port ${PORT}                                      ║
 ║  ✅ YENNI siap membantu! 🚀                                         ║
+║  ✅ Prompt Caching aktif (DeepSeek/OpenAI)                         ║
+║  ✅ Session Cache (Redis/Memory)                                   ║
+║  ✅ Summary Cache (Redis/Memory)                                   ║
+║  ✅ Response Cache (Redis/Memory)                                  ║
+║  ✅ Long Term Memory (Supabase + Redis)                            ║
+║  ✅ Input Gambar (OCR via GPT Mini)                                ║
+║  ✅ Generate Gambar (Gemini + DALL-E prompt)                       ║
+║  ✅ LaTeX Renderer                                                 ║
+║  ✅ Academic Writing (tanya detail dulu)                           ║
+║  ✅ Output Format (Text/PDF/DOCX)                                  ║
 ╚════════════════════════════════════════════════════════════════════╝
   `);
 });
