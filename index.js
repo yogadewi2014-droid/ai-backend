@@ -48,13 +48,13 @@ const CONFIG = {
       pricePer1KInput: 0.00014,
       pricePer1KOutput: 0.00028
     },
-    gpt5: {
-      url: process.env.GPT5_URL || 'https://api.openai.com/v1/chat/completions',
-      key: process.env.OPENAI_API_KEY || process.env.GPT5_KEY,
-      model: process.env.GPT5_MODEL || 'gpt-4-turbo-preview',
-      pricePer1KInput: 0.01,
-      pricePer1KOutput: 0.03
-    }
+gpt5: {
+  url: process.env.GPT5_URL || 'https://api.openai.com/v1/chat/completions',
+  key: process.env.OPENAI_API_KEY || process.env.GPT5_KEY,
+  model: process.env.GPT5_MODEL || 'gpt-4o', 
+  pricePer1KInput: 0.01,
+  pricePer1KOutput: 0.03
+},
   },
   serper: {
     apiKey: process.env.SERPER_API_KEY,
@@ -357,14 +357,19 @@ async function getChatHistory(userId, platform, limit = 10) {
 async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
   if (!supabase) return;
   
-  await supabase.from('chat_history').insert({
-    user_id: userId,
-    platform,
-    role,
-    content,
-    model_used: modelUsed,
-    created_at: new Date()
-  }).catch(e => logger.error('Save message error:', e));
+  try {
+    const { error } = await supabase.from('chat_history').insert({
+      user_id: userId,
+      platform,
+      role,
+      content,
+      model_used: modelUsed,
+      created_at: new Date()
+    });
+    if (error) logger.error('Save message error:', error);
+  } catch (e) {
+    logger.error('Save message exception:', e);
+  }
 }
 
 async function getLongTermMemory(userId) {
