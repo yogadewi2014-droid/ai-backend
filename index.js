@@ -1,8 +1,7 @@
 // ============================================
-// AI LEARNING BACKEND - FULL PRODUCTION READY
-// Support: Telegram, WhatsApp, Website
-// Models: GPT Mini, Deepseek V32, Deepseek Reasoning, GPT-5
-// Features: Search, Image, Memory, Cache, Cost Optimization
+// AI LEARNING BACKEND v3.0 - MULTI PLATFORM
+// Fitur: Tanya Level di Awal (Telegram, WA, Website)
+// Default: User HARUS pilih level sebelum chat
 // ============================================
 
 require('dotenv').config();
@@ -76,6 +75,18 @@ const CONFIG = {
     mahasiswa: 'deepseekReasoning',
     dosen_politikus: 'gpt5'
   },
+  levelNames: {
+    sd_smp: 'SD/SMP (GPT Mini)',
+    sma: 'SMA (Deepseek V32)',
+    mahasiswa: 'Mahasiswa (Deepseek Reasoning)',
+    dosen_politikus: 'Dosen/Politikus (GPT-5)'
+  },
+  levelPrices: {
+    sd_smp: '~Rp 4/chat ⚡ cepat',
+    sma: '~Rp 2.300/chat',
+    mahasiswa: '~Rp 2.300/chat',
+    dosen_politikus: '~Rp 211/chat'
+  },
   searchKeywords: ['terkini', 'berita', 'cuaca', '2025', '2026', 'sekarang', 'hari ini', 'update', 'latest'],
   mathKeywords: ['hitung', 'matematika', 'kalkulus', 'aljabar', 'coding', 'python', 'javascript'],
   fallbackChain: {
@@ -89,20 +100,28 @@ const CONFIG = {
 // ============================================
 // PENYIMPANAN LEVEL PER USER (Multi-Platform)
 // ============================================
-// Struktur: userLevels.set(`${userId}:${platform}`, level)
-const userLevels = new Map();
+const userLevels = new Map();        // key: "userId:platform" → level
+const userHasChosen = new Map();     // key: "userId:platform" → boolean (sudah pilih level)
 
 function getUserLevel(userId, platform) {
   const key = `${userId}:${platform}`;
-  const level = userLevels.get(key);
-  // Default: sd_smp (GPT Mini - termurah & tercepat)
-  return level || 'sd_smp';
+  return userLevels.get(key) || 'sd_smp';
 }
 
 function setUserLevel(userId, platform, level) {
   const key = `${userId}:${platform}`;
   userLevels.set(key, level);
-  logger.info(`Level updated: user=${userId}, platform=${platform}, level=${level}`);
+  console.log(`[LEVEL] ${platform}:${userId} → ${level}`);
+}
+
+function hasUserChosenLevel(userId, platform) {
+  const key = `${userId}:${platform}`;
+  return userHasChosen.get(key) || false;
+}
+
+function setUserChosenLevel(userId, platform, chosen = true) {
+  const key = `${userId}:${platform}`;
+  userHasChosen.set(key, chosen);
 }
 
 // ============================================
@@ -119,8 +138,10 @@ const logger = {
 // ============================================
 let supabase = null;
 if (CONFIG.supabase.url && CONFIG.supabase.key) {
-  supabase = require('@supabase/supabase-js').createClient(CONFIG.supabase.url, CONFIG.supabase.key);
+  supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.key);
   logger.info('Supabase connected');
+} else {
+  logger.warn('Supabase not configured');
 }
 
 // ============================================
@@ -212,6 +233,26 @@ function selectModel(level, prompt) {
     if (!reasoningKeywords.some(k => prompt.toLowerCase().includes(k))) model = 'deepseekV32';
   }
   return { model, reason: 'by_level' };
+}
+
+function getLevelInfoText() {
+  return `
+💰 *Pilih Level Belajar Anda* (berpengaruh pada biaya):
+
+/level_sd - *SD/SMP* (GPT Mini)
+   Biaya: ${CONFIG.levelPrices.sd_smp}
+
+/level_sma - *SMA* (Deepseek V32)
+   Biaya: ${CONFIG.levelPrices.sma}
+
+/level_mahasiswa - *Mahasiswa* (Deepseek Reasoning)
+   Biaya: ${CONFIG.levelPrices.mahasiswa}
+
+/level_dosen - *Dosen/Politikus* (GPT-5)
+   Biaya: ${CONFIG.levelPrices.dosen_politikus}
+
+Ketik perintah di atas untuk memilih level.
+`;
 }
 
 // ============================================
@@ -317,11 +358,11 @@ async function processChat(userId, platform, level, message) {
     }
     
     const history = await getChatHistory(userId, platform, 10);
-    const messages = [{ role: 'system', content: `Anda asisten belajar level ${level}. Jawab dengan bahasa Indonesia.` }];
+    const messages = [{ role: 'system', content: `Anda asisten belajar level ${level}. Jawab dengan bahasa Indonesia yang baik dan benar.` }];
     for (const h of history) messages.push({ role: h.role, content: h.content });
     let finalMessage = message;
     if (searchResults?.length) {
-      finalMessage += `\n\n[Hasil pencarian]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
+      finalMessage += `\n\n[Hasil pencarian dari internet]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
     }
     messages.push({ role: 'user', content: finalMessage });
     
@@ -344,13 +385,15 @@ async function processChat(userId, platform, level, message) {
 }
 
 // ============================================
-// TELEGRAM HANDLER (Dengan Level per User)
+// TELEGRAM HANDLER (Dengan Tanya Level di Awal)
 // ============================================
 async function sendTelegramMessage(chatId, text) {
   if (!CONFIG.telegram.token) return;
   try {
     await axios.post(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
-      chat_id: chatId, text: text.substring(0, 4096), parse_mode: 'HTML'
+      chat_id: chatId,
+      text: text.substring(0, 4096),
+      parse_mode: 'Markdown'
     });
   } catch (err) {}
 }
@@ -360,105 +403,207 @@ app.post('/webhook/telegram', async (req, res) => {
   try {
     const update = req.body;
     if (!update?.message) return;
+    
     const chatId = update.message.chat.id;
     const userId = update.message.from.id.toString();
-    const text = update.message.text;
+    const text = update.message.text || '';
     const platform = 'telegram';
     
-    if (text?.startsWith('/')) {
+    // Handle commands
+    if (text.startsWith('/')) {
       const cmd = text.split(' ')[0];
+      
       if (cmd === '/start') {
-        await sendTelegramMessage(chatId, '🤖 AI Learning Assistant\nLevel default: SD/SMP (GPT Mini)\n\nPerintah:\n/level_sd - SD/SMP\n/level_sma - SMA\n/level_mahasiswa - Mahasiswa\n/level_dosen - Dosen/Politikus');
-      } else if (cmd === '/level_sd') {
-        setUserLevel(userId, platform, 'sd_smp');
-        await sendTelegramMessage(chatId, '✅ Level: SD/SMP (GPT Mini)');
-      } else if (cmd === '/level_sma') {
-        setUserLevel(userId, platform, 'sma');
-        await sendTelegramMessage(chatId, '✅ Level: SMA (Deepseek V32)');
-      } else if (cmd === '/level_mahasiswa') {
-        setUserLevel(userId, platform, 'mahasiswa');
-        await sendTelegramMessage(chatId, '✅ Level: Mahasiswa (Deepseek Reasoning)');
-      } else if (cmd === '/level_dosen') {
-        setUserLevel(userId, platform, 'dosen_politikus');
-        await sendTelegramMessage(chatId, '✅ Level: Dosen/Politikus (GPT-5)');
+        await sendTelegramMessage(chatId, getLevelInfoText());
+        return;
       }
+      
+      if (cmd === '/level_sd') {
+        setUserLevel(userId, platform, 'sd_smp');
+        setUserChosenLevel(userId, platform, true);
+        await sendTelegramMessage(chatId, '✅ Level: SD/SMP (GPT Mini) - Biaya ~Rp 4/chat\nSekarang kirim pertanyaan Anda!');
+        return;
+      }
+      
+      if (cmd === '/level_sma') {
+        setUserLevel(userId, platform, 'sma');
+        setUserChosenLevel(userId, platform, true);
+        await sendTelegramMessage(chatId, '✅ Level: SMA (Deepseek V32) - Biaya ~Rp 2.300/chat\nSekarang kirim pertanyaan Anda!');
+        return;
+      }
+      
+      if (cmd === '/level_mahasiswa') {
+        setUserLevel(userId, platform, 'mahasiswa');
+        setUserChosenLevel(userId, platform, true);
+        await sendTelegramMessage(chatId, '✅ Level: Mahasiswa (Deepseek Reasoning) - Biaya ~Rp 2.300/chat\nSekarang kirim pertanyaan Anda!');
+        return;
+      }
+      
+      if (cmd === '/level_dosen') {
+        setUserLevel(userId, platform, 'dosen_politikus');
+        setUserChosenLevel(userId, platform, true);
+        await sendTelegramMessage(chatId, '✅ Level: Dosen/Politikus (GPT-5) - Biaya ~Rp 211/chat\nSekarang kirim pertanyaan Anda!');
+        return;
+      }
+      
+      if (cmd === '/reset_level') {
+        setUserChosenLevel(userId, platform, false);
+        await sendTelegramMessage(chatId, '🔄 Level telah direset. Kirim /start untuk memilih level baru.');
+        return;
+      }
+      
+      await sendTelegramMessage(chatId, 'Perintah tidak dikenal. Gunakan /start untuk melihat daftar perintah.');
       return;
     }
     
+    // ========== PENGECEKAN: Apakah user sudah pilih level? ==========
+    const sudahPilihLevel = hasUserChosenLevel(userId, platform);
+    
+    if (!sudahPilihLevel) {
+      await sendTelegramMessage(chatId, getLevelInfoText());
+      return;
+    }
+    
+    // User sudah pilih level, proses chat
     const userLevel = getUserLevel(userId, platform);
     const result = await processChat(userId, platform, userLevel, text);
     await sendTelegramMessage(chatId, result.content);
+    
   } catch (err) {
     logger.error('Telegram error:', err);
   }
 });
 
 // ============================================
-// WEBSITE API (Dengan Level per User)
+// WEBSITE API (Dengan Pengecekan Level)
 // ============================================
+
+// Endpoint untuk mendapatkan informasi level yang tersedia
+app.get('/api/levels', (req, res) => {
+  res.json({
+    levels: [
+      { id: 'sd_smp', name: CONFIG.levelNames.sd_smp, price: CONFIG.levelPrices.sd_smp },
+      { id: 'sma', name: CONFIG.levelNames.sma, price: CONFIG.levelPrices.sma },
+      { id: 'mahasiswa', name: CONFIG.levelNames.mahasiswa, price: CONFIG.levelPrices.mahasiswa },
+      { id: 'dosen_politikus', name: CONFIG.levelNames.dosen_politikus, price: CONFIG.levelPrices.dosen_politikus }
+    ]
+  });
+});
+
+// Endpoint untuk cek apakah user sudah pilih level
+app.get('/api/level/status/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const { platform = 'website' } = req.query;
+  const hasChosen = hasUserChosenLevel(userId, platform);
+  const level = getUserLevel(userId, platform);
+  res.json({ userId, platform, hasChosen, level, levelInfo: CONFIG.levelNames[level] });
+});
+
+// Endpoint untuk ganti level (dan tandai sudah pilih)
+app.post('/api/level', async (req, res) => {
+  const { userId, level, platform = 'website' } = req.body;
+  const validLevels = ['sd_smp', 'sma', 'mahasiswa', 'dosen_politikus'];
+  
+  if (!userId || !level || !validLevels.includes(level)) {
+    return res.status(400).json({ 
+      error: 'userId dan level (sd_smp/sma/mahasiswa/dosen_politikus) required' 
+    });
+  }
+  
+  setUserLevel(userId, platform, level);
+  setUserChosenLevel(userId, platform, true);
+  res.json({ success: true, message: `Level changed to ${level}`, levelInfo: CONFIG.levelNames[level] });
+});
+
+// Endpoint chat utama (dengan pengecekan level)
 app.post('/api/chat', async (req, res) => {
   const { message, userId, level, platform = 'website' } = req.body;
-  if (!message || !userId) return res.status(400).json({ error: 'message dan userId required' });
   
+  if (!message || !userId) {
+    return res.status(400).json({ error: 'message dan userId required' });
+  }
+  
+  // Jika user tidak mengirim level di request, cek dari storage
   let userLevel = level;
-  if (!userLevel) userLevel = getUserLevel(userId, platform);
+  if (!userLevel) {
+    const hasChosen = hasUserChosenLevel(userId, platform);
+    if (!hasChosen) {
+      return res.status(400).json({ 
+        error: 'Belum pilih level', 
+        message: 'Silakan pilih level terlebih dahulu via POST /api/level',
+        availableLevels: ['sd_smp', 'sma', 'mahasiswa', 'dosen_politikus']
+      });
+    }
+    userLevel = getUserLevel(userId, platform);
+  }
   
   const result = await processChat(userId, platform, userLevel, message);
   res.json({ reply: result.content, model: result.model });
 });
 
-// Endpoint untuk ganti level via API
-app.post('/api/level', async (req, res) => {
-  const { userId, level, platform = 'website' } = req.body;
-  const validLevels = ['sd_smp', 'sma', 'mahasiswa', 'dosen_politikus'];
-  if (!userId || !level || !validLevels.includes(level)) {
-    return res.status(400).json({ error: 'userId dan level (sd_smp/sma/mahasiswa/dosen_politikus) required' });
-  }
-  setUserLevel(userId, platform, level);
-  res.json({ success: true, message: `Level changed to ${level}` });
-});
-
-// Endpoint untuk cek level user
-app.get('/api/level/:userId', async (req, res) => {
-  const { userId } = req.params;
-  const { platform = 'website' } = req.query;
-  const level = getUserLevel(userId, platform);
-  res.json({ userId, platform, level });
-});
-
 // ============================================
-// WHATSAPP HANDLER (Dengan Level per User)
+// WHATSAPP HANDLER (Dengan Tanya Level di Awal)
 // ============================================
-// Format: { from: "628123456789", message: "Halo", type: "text" }
 app.post('/webhook/whatsapp', async (req, res) => {
   res.status(200).send('OK');
   try {
     const { from, message, type = 'text' } = req.body;
     if (!from || !message) return;
+    
     const userId = from;
     const platform = 'whatsapp';
     
-    // Handle command sederhana
-    if (message.startsWith('/level_sd')) {
+    // Handle command level
+    if (message === '/level_sd') {
       setUserLevel(userId, platform, 'sd_smp');
-      // Kirim response via WhatsApp API (sesuaikan dengan provider Anda)
-      return;
-    } else if (message.startsWith('/level_sma')) {
-      setUserLevel(userId, platform, 'sma');
-      return;
-    } else if (message.startsWith('/level_mahasiswa')) {
-      setUserLevel(userId, platform, 'mahasiswa');
-      return;
-    } else if (message.startsWith('/level_dosen')) {
-      setUserLevel(userId, platform, 'dosen_politikus');
+      setUserChosenLevel(userId, platform, true);
+      console.log(`[WA] User ${from} set level to sd_smp (GPT Mini)`);
+      // TODO: Kirim response ke WhatsApp: "✅ Level: SD/SMP - Biaya ~Rp 4/chat"
       return;
     }
     
+    if (message === '/level_sma') {
+      setUserLevel(userId, platform, 'sma');
+      setUserChosenLevel(userId, platform, true);
+      console.log(`[WA] User ${from} set level to sma (Deepseek V32)`);
+      return;
+    }
+    
+    if (message === '/level_mahasiswa') {
+      setUserLevel(userId, platform, 'mahasiswa');
+      setUserChosenLevel(userId, platform, true);
+      console.log(`[WA] User ${from} set level to mahasiswa (Deepseek Reasoning)`);
+      return;
+    }
+    
+    if (message === '/level_dosen') {
+      setUserLevel(userId, platform, 'dosen_politikus');
+      setUserChosenLevel(userId, platform, true);
+      console.log(`[WA] User ${from} set level to dosen_politikus (GPT-5)`);
+      return;
+    }
+    
+    if (message === '/start' || message === '/help') {
+      console.log(`[WA] Help requested by ${from}`);
+      // TODO: Kirim response ke WhatsApp dengan info level
+      return;
+    }
+    
+    // Cek apakah user sudah pilih level
+    const sudahPilihLevel = hasUserChosenLevel(userId, platform);
+    
+    if (!sudahPilihLevel) {
+      console.log(`[WA] User ${from} belum pilih level, kirim prompt`);
+      // TODO: Kirim response ke WhatsApp: getLevelInfoText() dalam format teks biasa
+      return;
+    }
+    
+    // User sudah pilih level, proses chat
     const userLevel = getUserLevel(userId, platform);
     const result = await processChat(userId, platform, userLevel, message);
     
-    // Kirim response via WhatsApp API (sesuaikan dengan provider Anda)
-    // Contoh: await sendWhatsAppMessage(from, result.content);
+    // TODO: Kirim response ke WhatsApp: result.content
+    console.log(`[WA] Response to ${from}: ${result.content.substring(0, 100)}...`);
     
   } catch (err) {
     logger.error('WhatsApp error:', err);
@@ -466,10 +611,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
 });
 
 // ============================================
-// HEALTH CHECK
+// HEALTH CHECK & ROOT
 // ============================================
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', redis: redisConnected, supabase: !!supabase, telegram: !!CONFIG.telegram.token });
+  res.json({ 
+    status: 'OK', 
+    redis: redisConnected, 
+    supabase: !!supabase, 
+    telegram: !!CONFIG.telegram.token,
+    version: '3.0.0'
+  });
 });
 
 app.get('/', (req, res) => {
@@ -477,9 +628,13 @@ app.get('/', (req, res) => {
     name: 'AI Learning Backend',
     version: '3.0.0',
     status: 'running',
+    features: {
+      level_selection: 'User MUST choose level before chatting',
+      default_level: 'sd_smp (GPT Mini)'
+    },
     endpoints: {
       chat: 'POST /api/chat',
-      level: 'POST /api/level, GET /api/level/:userId',
+      level: 'POST /api/level, GET /api/level/status/:userId, GET /api/levels',
       telegram: 'POST /webhook/telegram',
       whatsapp: 'POST /webhook/whatsapp',
       health: 'GET /api/health'
@@ -488,7 +643,7 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// CLEANUP CRON
+// CLEANUP CRON (setiap jam)
 // ============================================
 cron.schedule('0 * * * *', async () => {
   logger.info('🧹 Running cleanup...');
@@ -508,21 +663,29 @@ cron.schedule('0 * * * *', async () => {
 // ============================================
 app.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║     🤖 AI LEARNING BACKEND v3.0 - MULTI PLATFORM             ║
-╠══════════════════════════════════════════════════════════════╣
-║  ✅ Server running on port ${PORT}                               ║
-║  ✅ Default Level: SD-SMP (GPT Mini - termurah & tercepat)   ║
-║  ✅ Level tersimpan per user per platform                    ║
-╠══════════════════════════════════════════════════════════════╣
-║  📍 ENDPOINTS:                                               ║
-║     POST /api/chat         - Chat API                        ║
-║     POST /api/level        - Ganti level user                ║
-║     GET  /api/level/:userId - Cek level user                 ║
-║     POST /webhook/telegram - Telegram Bot                    ║
-║     POST /webhook/whatsapp - WhatsApp Bot                    ║
-║     GET  /api/health       - Health Check                    ║
-╚══════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              🤖 AI LEARNING BACKEND v3.0 - MULTI PLATFORM                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  ✅ Server running on port ${PORT}                                                ║
+║  ✅ Default: User HARUS pilih level sebelum chat (transparent pricing)        ║
+║  ✅ Level tersimpan per user per platform                                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  📍 ENDPOINTS:                                                                ║
+║     GET  /                    - Info server                                   ║
+║     GET  /api/health          - Health check                                  ║
+║     GET  /api/levels          - Daftar level & biaya                          ║
+║     POST /api/chat            - Chat API (wajib pilih level dulu)             ║
+║     POST /api/level           - Ganti level user                              ║
+║     GET  /api/level/status/:userId - Cek level user                           ║
+║     POST /webhook/telegram    - Telegram Bot Webhook                          ║
+║     POST /webhook/whatsapp    - WhatsApp Bot Webhook                          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  💰 LEVEL & BIAYA (transparan ke user):                                       ║
+║     sd_smp        : Rp 4/chat (GPT Mini)                                      ║
+║     sma           : Rp 2.300/chat (Deepseek V32)                              ║
+║     mahasiswa     : Rp 2.300/chat (Deepseek Reasoning)                        ║
+║     dosen_politikus: Rp 211/chat (GPT-5/GPT-4o)                               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
   `);
 });
 
