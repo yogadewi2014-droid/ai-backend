@@ -115,17 +115,19 @@ const CONFIG = {
 };
 
 // ============================================
-// GAYA JAWABAN PER LEVEL (HANYA maxTokens, temperature, requireFollowUp)
+// GAYA JAWABAN PER LEVEL (DENGAN maxTokens UNTUK ARTIKEL)
 // ============================================
 const answerStyle = {
   sd_smp: {
     maxTokens: 200,
     maxTokensDetail: 300,
+    maxTokensArticle: 400,
     temperature: 0.5,
     requireFollowUp: true
   },
   sma: {
     maxTokens: 250,
+    maxTokensArticle: 700,
     temperature: 0.5,
     requireFollowUp: true
   },
@@ -152,12 +154,49 @@ const basePrompts = {
 };
 
 // ============================================
-// INSTRUKSI KHUSUS (HANYA DIPANGGIL JIKA DIPERLUKAN - HEMAT TOKEN!)
+// INSTRUKSI KHUSUS (HANYA DIPANGGIL JIKA DIPERLUKAN)
 // ============================================
 const specialInstructions = {
-  mahasiswa_journal: `\n\nFORMAT JURNAL: Judul max 15 kata. Abstrak 200-250 kata (latar→tujuan→metode→hasil→kesimpulan). Pendahuluan (state of the art + gap). Tinjauan pustaka (80% jurnal). Metode. Hasil & pembahasan. Kesimpulan. Daftar pustaka APA 7th.`,
-  dosen_sinta: `\n\nFORMAT JURNAL SINTA: Judul max 12 kata. Abstrak Indonesia & Inggris max 250 kata. Pendahuluan (latar+state of the art+gap). Tinjauan pustaka (minimal 20 referensi, 80% jurnal). Metode. Hasil & pembahasan. Kesimpulan. Daftar pustaka minimal 25 referensi. Ceklist: turnitin≤20%.`,
-  dosen_speech: `\n\nFORMAT PIDATO: Pembukaan 15% (salam→sapaan→emosi→tujuan). Isi 70%: Logos 30% (data), Pathos 40% (cerita+emosi+[Jeda]), Ethos 10%. Penutup 15% (rangkuman→ajakan→penutup kuat). Gunakan kata "KITA".`
+  // SD-SMP: artikel sederhana
+  sd_smp_article: `\n\nFORMAT ARTIKEL SEDERHANA UNTUK SD/SMP:
+- Panjang: MAKSIMAL 300 kata (3-4 paragraf pendek)
+- Gunakan bahasa yang sangat sederhana seperti bicara dengan anak umur 10 tahun
+- Beri imajinasi (contoh: "bayangkan seperti...")
+- Struktur: Pembukaan (apa itu) → Isi (bagaimana cara kerjanya) → Penutup (kesimpulan singkat)
+- JANGAN gunakan istilah teknis rumit
+- Akhiri dengan: "Coba diskusikan dengan temanmu atau tanya gurunya!"`,
+  
+  // SMA: artikel umum
+  sma_article: `\n\nFORMAT ARTIKEL UNTUK SMA:
+- Panjang: MAKSIMAL 600 kata (5-7 paragraf)
+- Gunakan bahasa yang jelas, logis, mudah dipahami
+- Berikan contoh kasus atau soal sederhana
+- Struktur: Pendahuluan (latar belakang) → Pembahasan (2-3 poin utama) → Contoh → Kesimpulan
+- Sertakan 1-2 istilah teknis dengan penjelasan singkat
+- Akhiri dengan: "Ada yang ingin ditanyakan dari artikel ini?"`,
+  
+  // Mahasiswa: jurnal ilmiah
+  mahasiswa_journal: `\n\nFORMAT JURNAL ILMIAH MAHASISWA:
+- Panjang: MAKSIMAL 1500 kata
+- Struktur: Judul → Abstrak (200 kata) → Pendahuluan → Tinjauan Pustaka → Metode → Hasil → Pembahasan → Kesimpulan → Daftar Pustaka
+- Gunakan bahasa ilmiah, sertakan referensi (penulis, tahun)
+- Minimal 5 referensi dari jurnal atau buku`,
+  
+  // Dosen: jurnal SINTA
+  dosen_sinta: `\n\nFORMAT JURNAL SINTA:
+- Panjang: MAKSIMAL 2500 kata
+- Judul max 12 kata. Abstrak Indonesia & Inggris max 250 kata.
+- Pendahuluan (latar+state of the art+gap)
+- Tinjauan pustaka (minimal 20 referensi, 80% jurnal)
+- Metode lengkap. Hasil & pembahasan. Kesimpulan.
+- Daftar pustaka minimal 25 referensi, format APA 7th`,
+  
+  // Dosen: pidato
+  dosen_speech: `\n\nFORMAT PIDATO:
+- Pembukaan 15% (salam→sapaan→emosi→tujuan)
+- Isi 70%: data (30%), cerita/emosi (40%), kredibilitas (10%)
+- Penutup 15% (rangkuman→ajakan→penutup kuat)
+- Gunakan kata "KITA", variasi kalimat, tanda tanya retoris`
 };
 
 // ============================================
@@ -165,25 +204,39 @@ const specialInstructions = {
 // ============================================
 function buildSystemPrompt(level, userMessage) {
   let prompt = basePrompts[level] || basePrompts.sma;
-  const lowerMsg = userMessage.toLowerCase();
+  const lowerMsg = (userMessage || '').toLowerCase();
   
-  // Hanya tambahkan instruksi khusus JIKA user memintanya
-  if (level === 'mahasiswa') {
-    if (lowerMsg.includes('artikel jurnal') || lowerMsg.includes('paper') || 
-        lowerMsg.includes('skripsi') || lowerMsg.includes('tesis')) {
-      prompt += specialInstructions.mahasiswa_journal;
-    }
+  // Deteksi apakah user minta artikel/tulisan
+  const isAskingArticle = lowerMsg.includes('artikel') || lowerMsg.includes('tulisan') || 
+                          lowerMsg.includes('buatkan') || lowerMsg.includes('buatin') ||
+                          lowerMsg.includes('bantu buat') || lowerMsg.includes('tugas');
+  
+  // KHUSUS SD-SMP: artikel sederhana
+  if (level === 'sd_smp' && isAskingArticle) {
+    prompt += specialInstructions.sd_smp_article;
+  }
+  // KHUSUS SMA: artikel umum
+  else if (level === 'sma' && isAskingArticle) {
+    prompt += specialInstructions.sma_article;
+  }
+  // MAHASISWA: jurnal ilmiah
+  else if (level === 'mahasiswa' && (lowerMsg.includes('jurnal') || lowerMsg.includes('paper') || 
+      lowerMsg.includes('skripsi') || lowerMsg.includes('tesis') || lowerMsg.includes('karya ilmiah'))) {
+    prompt += specialInstructions.mahasiswa_journal;
+  }
+  // DOSEN: jurnal SINTA
+  else if (level === 'dosen_politikus' && (lowerMsg.includes('sinta') || lowerMsg.includes('jurnal nasional') || 
+      lowerMsg.includes('publikasi') || lowerMsg.includes('artikel jurnal'))) {
+    prompt += specialInstructions.dosen_sinta;
+  }
+  // DOSEN: pidato
+  else if (level === 'dosen_politikus' && (lowerMsg.includes('pidato') || lowerMsg.includes('speech') || 
+      lowerMsg.includes('orasi') || lowerMsg.includes('kampanye') || lowerMsg.includes('sambutan'))) {
+    prompt += specialInstructions.dosen_speech;
   }
   
-  if (level === 'dosen_politikus') {
-    if (lowerMsg.includes('sinta') || lowerMsg.includes('jurnal nasional') || lowerMsg.includes('publikasi')) {
-      prompt += specialInstructions.dosen_sinta;
-    }
-    else if (lowerMsg.includes('pidato') || lowerMsg.includes('speech') || 
-             lowerMsg.includes('orasi') || lowerMsg.includes('kampanye')) {
-      prompt += specialInstructions.dosen_speech;
-    }
-  }
+  // Instruksi anti-halu untuk semua level
+  prompt += `\n\nPENTING: Jangan mengada-ada atau berhalusinasi. Jika tidak tahu, katakan "Saya tidak tahu". Gunakan bahasa yang natural seperti manusia biasa.`;
   
   return prompt;
 }
@@ -232,7 +285,7 @@ const logger = {
 };
 
 // ============================================
-// TEKS LEVEL INFO (DENGAN SALAM SEMUA AGAMA)
+// TEKS LEVEL INFO
 // ============================================
 function getLevelInfoText() {
   const salam = getRandomGreeting();
@@ -260,17 +313,12 @@ Salam hangat, **Yenni - Sahabat AI Anda** 💙
 }
 
 // ============================================
-// RESPON SAPAAN & IDENTITAS
+// RESPON SAPAAN
 // ============================================
 function getGreetingResponse(text, level) {
   const lowerText = text.toLowerCase().trim();
-  
-  const greetingsList = [
-    'hai', 'hello', 'halo', 'hi', 'hey',
-    'assalamualaikum', 'salam', 'selamat pagi', 'selamat siang', 'selamat malam',
-    'om swastiastu', 'salam sejahtera', 'wei de dong tian'
-  ];
-  const askingWho = ['siapa kamu', 'siapa anda', 'nama kamu', 'nama anda', 'kenalan dong', 'perkenalkan', 'yenni'];
+  const greetingsList = ['hai', 'hello', 'halo', 'hi', 'hey', 'assalamualaikum', 'salam', 'selamat pagi', 'selamat siang', 'selamat malam', 'om swastiastu', 'salam sejahtera'];
+  const askingWho = ['siapa kamu', 'siapa anda', 'nama kamu', 'nama anda', 'kenalan', 'perkenalkan', 'yenni'];
   
   const isGreeting = greetingsList.some(g => lowerText.includes(g));
   const isAskingWho = askingWho.some(q => lowerText.includes(q));
@@ -297,7 +345,7 @@ if (CONFIG.supabase.url && CONFIG.supabase.key) {
 }
 
 // ============================================
-// CACHE (Redis/Memory)
+// CACHE
 // ============================================
 let redisClient = null;
 let redisConnected = false;
@@ -384,7 +432,7 @@ function selectModel(level, prompt) {
 }
 
 // ============================================
-// SEARCH (Serper)
+// SEARCH
 // ============================================
 async function searchWeb(query) {
   if (!CONFIG.serper.apiKey) return [];
@@ -407,18 +455,23 @@ async function searchWeb(query) {
 // ============================================
 // PANGGIL AI
 // ============================================
-async function callAI(modelName, messages, level = 'sma', timeoutMs = null) {
+async function callAI(modelName, messages, level = 'sma', timeoutMs = null, isArticle = false) {
   const model = CONFIG.ai[modelName];
   if (!model || !model.key) return { success: false, error: `Model ${modelName} not configured` };
   
   const style = answerStyle[level] || answerStyle.sma;
+  
+  let maxTokens = style.maxTokens;
+  if (isArticle && style.maxTokensArticle) {
+    maxTokens = style.maxTokensArticle;
+  }
   
   try {
     const response = await axios.post(model.url, {
       model: model.model,
       messages: messages,
       temperature: style.temperature,
-      max_tokens: style.maxTokens
+      max_tokens: maxTokens
     }, {
       headers: { 'Authorization': `Bearer ${model.key}` },
       timeout: timeoutMs || model.timeout || 30000
@@ -430,10 +483,10 @@ async function callAI(modelName, messages, level = 'sma', timeoutMs = null) {
   }
 }
 
-async function callWithFallback(modelName, messages, level) {
+async function callWithFallback(modelName, messages, level, isArticle = false) {
   const chain = [modelName, ...(CONFIG.fallbackChain[modelName] || [])];
   for (const attempt of chain) {
-    const result = await callAI(attempt, messages, level);
+    const result = await callAI(attempt, messages, level, null, isArticle);
     if (result.success) {
       if (attempt !== modelName) logger.warn(`Fallback: ${modelName} → ${attempt}`);
       return result;
@@ -443,7 +496,7 @@ async function callWithFallback(modelName, messages, level) {
 }
 
 // ============================================
-// DATABASE OPERATIONS
+// DATABASE
 // ============================================
 async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
   if (!supabase) return;
@@ -465,14 +518,13 @@ async function getChatHistory(userId, platform, limit = 10) {
 }
 
 // ============================================
-// PROSES CHAT UTAMA (DENGAN SYSTEM PROMPT HEMAT TOKEN)
+// PROSES CHAT UTAMA
 // ============================================
 async function processChat(userId, platform, level, message) {
   const startTime = Date.now();
   let result = null;
   logger.info(`Processing: user=${userId}, platform=${platform}, level=${level}, msg=${message.substring(0, 50)}`);
   
-  // CEK SAPAAN & IDENTITAS
   const greetingResponse = getGreetingResponse(message, level);
   if (greetingResponse) {
     return { success: true, content: greetingResponse, model: 'system', isGreeting: true };
@@ -496,8 +548,6 @@ async function processChat(userId, platform, level, message) {
     }
     
     const history = await getChatHistory(userId, platform, 10);
-    
-    // 🔥 SYSTEM PROMPT HEMAT TOKEN (menggunakan fungsi buildSystemPrompt)
     const systemPrompt = buildSystemPrompt(level, message);
     const messages = [{ role: 'system', content: systemPrompt }];
     
@@ -508,7 +558,12 @@ async function processChat(userId, platform, level, message) {
     }
     messages.push({ role: 'user', content: finalMessage });
     
-    result = await callWithFallback(selectedModel, messages, level);
+    const isArticle = (level === 'sd_smp' || level === 'sma') && (
+      message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan') ||
+      message.toLowerCase().includes('buatkan') || message.toLowerCase().includes('tugas')
+    );
+    
+    result = await callWithFallback(selectedModel, messages, level, isArticle);
     
     await saveChatMessage(userId, platform, 'user', message, selectedModel);
     await saveChatMessage(userId, platform, 'assistant', result.content, result.model);
@@ -572,7 +627,7 @@ app.post('/webhook/telegram', async (req, res) => {
       }
       
       let level = null;
-      if (cmd === '/level_sd' || cmd === '/level_sd' || cmd === '/levelsdsmp') level = 'sd_smp';
+      if (cmd === '/level_sd' || cmd === '/levelsdsmp') level = 'sd_smp';
       else if (cmd === '/level_sma' || cmd === '/levelsma') level = 'sma';
       else if (cmd === '/level_mahasiswa' || cmd === '/levelmahasiswa') level = 'mahasiswa';
       else if (cmd === '/level_dosen' || cmd === '/leveldosen') level = 'dosen_politikus';
@@ -674,7 +729,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const platform = 'whatsapp';
     
     let level = null;
-    if (message === '/level_sd' || message === '/level_sd') level = 'sd_smp';
+    if (message === '/level_sd' || message === '/levelsdsmp') level = 'sd_smp';
     else if (message === '/level_sma' || message === '/levelsma') level = 'sma';
     else if (message === '/level_mahasiswa' || message === '/levelmahasiswa') level = 'mahasiswa';
     else if (message === '/level_dosen' || message === '/leveldosen') level = 'dosen_politikus';
@@ -736,13 +791,4 @@ app.listen(PORT, () => {
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                 🤖 YENNI - SAHABAT AI ANDA 🤖                                 ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  ✅ Server running on port ${PORT}                                                ║
-║  ✅ Identitas: YENNI (Sahabat AI)                                           ║
-║  ✅ Salam semua agama Indonesia (random setiap /start)                       ║
-║  ✅ HEMAT TOKEN: System prompt ringkas, instruksi khusus hanya jika perlu    ║
-║  ✅ Harga API 2026 (SD-SMP: Rp4/chat)                                        ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-  `);
-});
-
-module.exports = app;
+║  ✅ Server running on port ${PORT}                                               
