@@ -366,9 +366,11 @@ async function saveChatMessage(userId, platform, role, content, modelUsed = null
       model_used: modelUsed,
       created_at: new Date()
     });
-    if (error) logger.error('Save message error:', error);
+    if (error) {
+      logger.error('Save message error:', error);
+    }
   } catch (e) {
-    logger.error('Save message exception:', e);
+    logger.error('Save message exception:', e.message);
   }
 }
 
@@ -429,6 +431,7 @@ async function buildPrompt(userId, platform, level, userMessage, searchResults =
 // ============================================
 async function processChat(userId, platform, level, message, imageUrl = null) {
   const startTime = Date.now();
+  let result = null;
   logger.info(`Processing chat: user=${userId}, platform=${platform}, level=${level}, message=${message.substring(0, 50)}`);
   
   try {
