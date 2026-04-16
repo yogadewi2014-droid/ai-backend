@@ -1,7 +1,6 @@
 // ============================================
 // AI LEARNING BACKEND v3.0 - MULTI PLATFORM
 // Identitas: YENNI - Sahabat AI Anda
-// Salam semua agama Indonesia
 // ============================================
 
 require('dotenv').config();
@@ -14,14 +13,11 @@ const cron = require('node-cron');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ============================================
-// MIDDLEWARE
-// ============================================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ============================================
-// SALAM SEMUA AGAMA DI INDONESIA
+// SALAM SEMUA AGAMA
 // ============================================
 const greetings = {
   islam: 'Assalamualaikum warahmatullahi wabarakatuh 🤲',
@@ -38,7 +34,7 @@ function getRandomGreeting() {
 }
 
 // ============================================
-// KONFIGURASI API & HARGA 2026
+// KONFIGURASI
 // ============================================
 const CONFIG = {
   ai: {
@@ -115,7 +111,7 @@ const CONFIG = {
 };
 
 // ============================================
-// GAYA JAWABAN PER LEVEL (DENGAN maxTokens UNTUK ARTIKEL)
+// GAYA JAWABAN PER LEVEL
 // ============================================
 const answerStyle = {
   sd_smp: {
@@ -144,100 +140,42 @@ const answerStyle = {
 };
 
 // ============================================
-// BASE SYSTEM PROMPT (RINGKAS & HEMAT TOKEN)
+// BASE PROMPTS
 // ============================================
 const basePrompts = {
-  sd_smp: `Anda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Salam netral "Halo". Akhiri "Ada yang mau ditanya lagi?". JANGAN sebut agama, Tuhan, "Amin".`,
+  sd_smp: `Anda guru SD/SMP. Bahasa sederhana. Maksimal 3 kalimat. Salam netral "Halo". Akhiri "Ada yang mau ditanya lagi?". JANGAN sebut agama.`,
   sma: `Anda guru SMA. Jawab 5 kalimat. Beri contoh. Salam "Halo". Akhiri "Butuh contoh soal?". JANGAN sebut agama.`,
-  mahasiswa: `Anda asisten riset. Jawab 7 kalimat. Sertakan 1 referensi. Salam "Halo". JANGAN sentuh agama kecuali diminta.`,
-  dosen_politikus: `Anda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi. Salam "Selamat pagi/siang/sore". JANGAN bahas agama kecuali relevan.`
+  mahasiswa: `Anda asisten riset. Jawab 7 kalimat. Sertakan 1 referensi. Salam "Halo".`,
+  dosen_politikus: `Anda analis kebijakan. Jawab 5 kalimat padat. Fokus data & rekomendasi. Salam "Selamat pagi/siang/sore".`
 };
 
 // ============================================
-// INSTRUKSI KHUSUS (HANYA DIPANGGIL JIKA DIPERLUKAN)
+// INSTRUKSI KHUSUS
 // ============================================
 const specialInstructions = {
-  // SD-SMP: artikel sederhana
-  sd_smp_article: `\n\nFORMAT ARTIKEL SEDERHANA UNTUK SD/SMP:
-- Panjang: MAKSIMAL 300 kata (3-4 paragraf pendek)
-- Gunakan bahasa yang sangat sederhana seperti bicara dengan anak umur 10 tahun
-- Beri imajinasi (contoh: "bayangkan seperti...")
-- Struktur: Pembukaan (apa itu) → Isi (bagaimana cara kerjanya) → Penutup (kesimpulan singkat)
-- JANGAN gunakan istilah teknis rumit
-- Akhiri dengan: "Coba diskusikan dengan temanmu atau tanya gurunya!"`,
-  
-  // SMA: artikel umum
-  sma_article: `\n\nFORMAT ARTIKEL UNTUK SMA:
-- Panjang: MAKSIMAL 600 kata (5-7 paragraf)
-- Gunakan bahasa yang jelas, logis, mudah dipahami
-- Berikan contoh kasus atau soal sederhana
-- Struktur: Pendahuluan (latar belakang) → Pembahasan (2-3 poin utama) → Contoh → Kesimpulan
-- Sertakan 1-2 istilah teknis dengan penjelasan singkat
-- Akhiri dengan: "Ada yang ingin ditanyakan dari artikel ini?"`,
-  
-  // Mahasiswa: jurnal ilmiah
-  mahasiswa_journal: `\n\nFORMAT JURNAL ILMIAH MAHASISWA:
-- Panjang: MAKSIMAL 1500 kata
-- Struktur: Judul → Abstrak (200 kata) → Pendahuluan → Tinjauan Pustaka → Metode → Hasil → Pembahasan → Kesimpulan → Daftar Pustaka
-- Gunakan bahasa ilmiah, sertakan referensi (penulis, tahun)
-- Minimal 5 referensi dari jurnal atau buku`,
-  
-  // Dosen: jurnal SINTA
-  dosen_sinta: `\n\nFORMAT JURNAL SINTA:
-- Panjang: MAKSIMAL 2500 kata
-- Judul max 12 kata. Abstrak Indonesia & Inggris max 250 kata.
-- Pendahuluan (latar+state of the art+gap)
-- Tinjauan pustaka (minimal 20 referensi, 80% jurnal)
-- Metode lengkap. Hasil & pembahasan. Kesimpulan.
-- Daftar pustaka minimal 25 referensi, format APA 7th`,
-  
-  // Dosen: pidato
-  dosen_speech: `\n\nFORMAT PIDATO:
-- Pembukaan 15% (salam→sapaan→emosi→tujuan)
-- Isi 70%: data (30%), cerita/emosi (40%), kredibilitas (10%)
-- Penutup 15% (rangkuman→ajakan→penutup kuat)
-- Gunakan kata "KITA", variasi kalimat, tanda tanya retoris`
+  sd_smp_article: `\n\nFORMAT ARTIKEL SD/SMP: Maksimal 300 kata, bahasa sederhana, 3-4 paragraf, akhiri ajakan diskusi.`,
+  sma_article: `\n\nFORMAT ARTIKEL SMA: Maksimal 600 kata, 5-7 paragraf, beri contoh, bahasa jelas dan logis.`,
+  mahasiswa_journal: `\n\nFORMAT JURNAL: Judul, Abstrak 200 kata, Pendahuluan, Tinjauan Pustaka, Metode, Hasil, Pembahasan, Kesimpulan, Daftar Pustaka.`,
+  dosen_sinta: `\n\nFORMAT JURNAL SINTA: Judul max 12 kata, Abstrak Indonesia/Inggris max 250 kata, minimal 20 referensi.`,
+  dosen_speech: `\n\nFORMAT PIDATO: Pembukaan 15%, Isi 70% (data+cerita+emosi), Penutup 15%, gunakan kata "KITA".`
 };
 
 // ============================================
-// FUNGSI MEMBANGUN SYSTEM PROMPT (HEMAT TOKEN!)
+// FUNGSI MEMBANGUN PROMPT
 // ============================================
 function buildSystemPrompt(level, userMessage) {
   let prompt = basePrompts[level] || basePrompts.sma;
   const lowerMsg = (userMessage || '').toLowerCase();
   
-  // Deteksi apakah user minta artikel/tulisan
-  const isAskingArticle = lowerMsg.includes('artikel') || lowerMsg.includes('tulisan') || 
-                          lowerMsg.includes('buatkan') || lowerMsg.includes('buatin') ||
-                          lowerMsg.includes('bantu buat') || lowerMsg.includes('tugas');
+  const isAskingArticle = lowerMsg.includes('artikel') || lowerMsg.includes('tulisan') || lowerMsg.includes('buatkan');
   
-  // KHUSUS SD-SMP: artikel sederhana
-  if (level === 'sd_smp' && isAskingArticle) {
-    prompt += specialInstructions.sd_smp_article;
-  }
-  // KHUSUS SMA: artikel umum
-  else if (level === 'sma' && isAskingArticle) {
-    prompt += specialInstructions.sma_article;
-  }
-  // MAHASISWA: jurnal ilmiah
-  else if (level === 'mahasiswa' && (lowerMsg.includes('jurnal') || lowerMsg.includes('paper') || 
-      lowerMsg.includes('skripsi') || lowerMsg.includes('tesis') || lowerMsg.includes('karya ilmiah'))) {
-    prompt += specialInstructions.mahasiswa_journal;
-  }
-  // DOSEN: jurnal SINTA
-  else if (level === 'dosen_politikus' && (lowerMsg.includes('sinta') || lowerMsg.includes('jurnal nasional') || 
-      lowerMsg.includes('publikasi') || lowerMsg.includes('artikel jurnal'))) {
-    prompt += specialInstructions.dosen_sinta;
-  }
-  // DOSEN: pidato
-  else if (level === 'dosen_politikus' && (lowerMsg.includes('pidato') || lowerMsg.includes('speech') || 
-      lowerMsg.includes('orasi') || lowerMsg.includes('kampanye') || lowerMsg.includes('sambutan'))) {
-    prompt += specialInstructions.dosen_speech;
-  }
+  if (level === 'sd_smp' && isAskingArticle) prompt += specialInstructions.sd_smp_article;
+  else if (level === 'sma' && isAskingArticle) prompt += specialInstructions.sma_article;
+  else if (level === 'mahasiswa' && (lowerMsg.includes('jurnal') || lowerMsg.includes('skripsi'))) prompt += specialInstructions.mahasiswa_journal;
+  else if (level === 'dosen_politikus' && lowerMsg.includes('sinta')) prompt += specialInstructions.dosen_sinta;
+  else if (level === 'dosen_politikus' && (lowerMsg.includes('pidato') || lowerMsg.includes('speech'))) prompt += specialInstructions.dosen_speech;
   
-  // Instruksi anti-halu untuk semua level
-  prompt += `\n\nPENTING: Jangan mengada-ada atau berhalusinasi. Jika tidak tahu, katakan "Saya tidak tahu". Gunakan bahasa yang natural seperti manusia biasa.`;
-  
+  prompt += `\n\nJangan berhalusinasi. Jika tidak tahu, katakan "Saya tidak tahu".`;
   return prompt;
 }
 
@@ -249,67 +187,51 @@ function getTimeOfDay() {
 }
 
 // ============================================
-// PENYIMPANAN LEVEL PER USER
+// PENYIMPANAN LEVEL USER
 // ============================================
 const userLevels = new Map();
 const userHasChosen = new Map();
 
 function getUserLevel(userId, platform) {
-  const key = `${userId}:${platform}`;
-  return userLevels.get(key) || 'sd_smp';
+  return userLevels.get(`${userId}:${platform}`) || 'sd_smp';
 }
 
 function setUserLevel(userId, platform, level) {
-  const key = `${userId}:${platform}`;
-  userLevels.set(key, level);
+  userLevels.set(`${userId}:${platform}`, level);
   console.log(`[LEVEL] ${platform}:${userId} → ${level}`);
 }
 
 function hasUserChosenLevel(userId, platform) {
-  const key = `${userId}:${platform}`;
-  return userHasChosen.get(key) || false;
+  return userHasChosen.get(`${userId}:${platform}`) || false;
 }
 
 function setUserChosenLevel(userId, platform, chosen = true) {
-  const key = `${userId}:${platform}`;
-  userHasChosen.set(key, chosen);
+  userHasChosen.set(`${userId}:${platform}`, chosen);
 }
 
 // ============================================
 // LOGGER
 // ============================================
 const logger = {
-  info: (msg, data = null) => console.log(`[INFO] ${msg}`, data ? JSON.stringify(data) : ''),
-  error: (msg, err = null) => console.error(`[ERROR] ${msg}`, err?.message || err || ''),
-  warn: (msg, data = null) => console.warn(`[WARN] ${msg}`, data ? JSON.stringify(data) : '')
+  info: (msg, data) => console.log(`[INFO] ${msg}`, data ? JSON.stringify(data) : ''),
+  error: (msg, err) => console.error(`[ERROR] ${msg}`, err?.message || err || ''),
+  warn: (msg, data) => console.warn(`[WARN] ${msg}`, data ? JSON.stringify(data) : '')
 };
 
 // ============================================
 // TEKS LEVEL INFO
 // ============================================
 function getLevelInfoText() {
-  const salam = getRandomGreeting();
-  return `
-${salam}
+  return `${getRandomGreeting()}
 
-💰 *Pilih Level Belajar Anda* (berpengaruh pada biaya):
+💰 *Pilih Level Belajar Anda*:
 
-/level_sd - *SD/SMP* (GPT Mini)
-   Biaya: ${CONFIG.levelPrices.sd_smp}
+/level_sd - *SD/SMP* - ${CONFIG.levelPrices.sd_smp}
+/level_sma - *SMA* - ${CONFIG.levelPrices.sma}
+/level_mahasiswa - *Mahasiswa* - ${CONFIG.levelPrices.mahasiswa}
+/level_dosen - *Dosen/Politikus* - ${CONFIG.levelPrices.dosen_politikus}
 
-/level_sma - *SMA* (Deepseek V32)
-   Biaya: ${CONFIG.levelPrices.sma}
-
-/level_mahasiswa - *Mahasiswa* (Deepseek Reasoning)
-   Biaya: ${CONFIG.levelPrices.mahasiswa}
-
-/level_dosen - *Dosen/Politikus* (GPT-5)
-   Biaya: ${CONFIG.levelPrices.dosen_politikus}
-
-Ketik perintah di atas (contoh: /level_sd) untuk memilih level.
-
-Salam hangat, **Yenni - Sahabat AI Anda** 💙
-`;
+**Yenni - Sahabat AI Anda** 💙`;
 }
 
 // ============================================
@@ -317,16 +239,13 @@ Salam hangat, **Yenni - Sahabat AI Anda** 💙
 // ============================================
 function getGreetingResponse(text, level) {
   const lowerText = text.toLowerCase().trim();
-  const greetingsList = ['hai', 'hello', 'halo', 'hi', 'hey', 'assalamualaikum', 'salam', 'selamat pagi', 'selamat siang', 'selamat malam', 'om swastiastu', 'salam sejahtera'];
-  const askingWho = ['siapa kamu', 'siapa anda', 'nama kamu', 'nama anda', 'kenalan', 'perkenalkan', 'yenni'];
+  const greetingsList = ['hai', 'halo', 'hi', 'hey', 'assalamualaikum', 'salam'];
+  const askingWho = ['siapa kamu', 'nama kamu', 'yenni'];
   
-  const isGreeting = greetingsList.some(g => lowerText.includes(g));
-  const isAskingWho = askingWho.some(q => lowerText.includes(q));
-  
-  if (isGreeting || isAskingWho || (text.length < 15 && isGreeting)) {
+  if (greetingsList.some(g => lowerText.includes(g)) || askingWho.some(q => lowerText.includes(q))) {
     const responses = {
-      sd_smp: `Hai! 👋 Aku **Yenni**, sahabat AI kamu. Ada yang bisa aku bantu belajar hari ini? 🌟\n\n${getRandomGreeting()}`,
-      sma: `Halo! 👋 **Yenni** di sini, siap bantu belajar. Ada yang mau ditanyakan? 📚\n\n${getRandomGreeting()}`,
+      sd_smp: `Hai! 👋 Aku **Yenni**, sahabat AI kamu. Ada yang bisa aku bantu? 🌟\n\n${getRandomGreeting()}`,
+      sma: `Halo! 👋 **Yenni** di sini. Ada yang mau ditanyakan? 📚\n\n${getRandomGreeting()}`,
       mahasiswa: `Halo. Saya **Yenni**, asisten riset. Ada topik yang mau didiskusikan? 🎓\n\n${getRandomGreeting()}`,
       dosen_politikus: `Selamat ${getTimeOfDay()}. Saya **Yenni**, siap membantu analisis Anda. 📊\n\n${getRandomGreeting()}`
     };
@@ -396,10 +315,7 @@ async function checkBudget(userId, estimatedCostUSD) {
   const today = new Date().toDateString();
   const userData = userBudget.get(userId) || { dailyUsage: 0, date: today };
   if (userData.date !== today) userData.dailyUsage = 0;
-  const DAILY_LIMIT = 0.5;
-  if (userData.dailyUsage + estimatedCostUSD > DAILY_LIMIT) {
-    return { allowed: false };
-  }
+  if (userData.dailyUsage + estimatedCostUSD > 0.5) return { allowed: false };
   return { allowed: true };
 }
 
@@ -419,14 +335,7 @@ function estimateCost(modelName, inputTokens, outputTokens = 300) {
   return ((inputTokens / 1000) * model.pricePer1KInput) + ((outputTokens / 1000) * model.pricePer1KOutput);
 }
 
-function isSimpleQuestion(text) {
-  const simplePatterns = [/^(hai|hello|halo|hy|hi)$/i, /^(terima kasih|thanks|makasih)$/i];
-  return simplePatterns.some(p => p.test(text.trim()));
-}
-
 function selectModel(level, prompt) {
-  if (isSimpleQuestion(prompt)) return { model: 'gptMini', reason: 'simple_question' };
-  if (CONFIG.mathKeywords.some(k => prompt.toLowerCase().includes(k))) return { model: 'deepseekV32', reason: 'math_coding' };
   let model = CONFIG.levelModelMap[level] || 'gptMini';
   return { model, reason: 'by_level' };
 }
@@ -444,7 +353,7 @@ async function searchWeb(query) {
       headers: { 'X-API-KEY': CONFIG.serper.apiKey },
       timeout: 10000
     });
-    const results = (response.data.organic || []).slice(0, 3).map(r => ({ title: r.title, snippet: r.snippet, link: r.link }));
+    const results = (response.data.organic || []).slice(0, 3).map(r => ({ title: r.title, snippet: r.snippet }));
     await setCache(cacheKey, results, 21600);
     return results;
   } catch (err) {
@@ -460,11 +369,8 @@ async function callAI(modelName, messages, level = 'sma', timeoutMs = null, isAr
   if (!model || !model.key) return { success: false, error: `Model ${modelName} not configured` };
   
   const style = answerStyle[level] || answerStyle.sma;
-  
   let maxTokens = style.maxTokens;
-  if (isArticle && style.maxTokensArticle) {
-    maxTokens = style.maxTokensArticle;
-  }
+  if (isArticle && style.maxTokensArticle) maxTokens = style.maxTokensArticle;
   
   try {
     const response = await axios.post(model.url, {
@@ -492,7 +398,7 @@ async function callWithFallback(modelName, messages, level, isArticle = false) {
       return result;
     }
   }
-  return { success: true, content: "Maaf, layanan sedang sibuk. Silakan coba lagi nanti.", model: 'system', isFallback: true };
+  return { success: true, content: "Maaf, layanan sedang sibuk. Silakan coba lagi nanti.", model: 'system' };
 }
 
 // ============================================
@@ -501,12 +407,11 @@ async function callWithFallback(modelName, messages, level, isArticle = false) {
 async function saveChatMessage(userId, platform, role, content, modelUsed = null) {
   if (!supabase) return;
   try {
-    const { error } = await supabase.from('chat_history').insert({
+    await supabase.from('chat_history').insert({
       user_id: userId, platform, role, content, model_used: modelUsed, created_at: new Date()
     });
-    if (error) logger.error('Save error:', error);
   } catch (e) {
-    logger.error('Save exception:', e.message);
+    logger.error('Save error:', e.message);
   }
 }
 
@@ -518,16 +423,16 @@ async function getChatHistory(userId, platform, limit = 10) {
 }
 
 // ============================================
-// PROSES CHAT UTAMA
+// PROSES CHAT
 // ============================================
 async function processChat(userId, platform, level, message) {
   const startTime = Date.now();
   let result = null;
-  logger.info(`Processing: user=${userId}, platform=${platform}, level=${level}, msg=${message.substring(0, 50)}`);
+  logger.info(`Processing: ${userId}, ${platform}, ${level}, ${message.substring(0, 50)}`);
   
   const greetingResponse = getGreetingResponse(message, level);
   if (greetingResponse) {
-    return { success: true, content: greetingResponse, model: 'system', isGreeting: true };
+    return { success: true, content: greetingResponse, model: 'system' };
   }
   
   try {
@@ -541,8 +446,7 @@ async function processChat(userId, platform, level, message) {
     }
     
     const { model: selectedModel } = selectModel(level, message);
-    const estimatedCost = estimateCost(selectedModel, message.length / 4);
-    const budgetOk = await checkBudget(userId, estimatedCost);
+    const budgetOk = await checkBudget(userId, 0.001);
     if (!budgetOk.allowed) {
       return { success: true, content: "Maaf, kuota harian Anda telah habis.", model: 'system' };
     }
@@ -550,30 +454,24 @@ async function processChat(userId, platform, level, message) {
     const history = await getChatHistory(userId, platform, 10);
     const systemPrompt = buildSystemPrompt(level, message);
     const messages = [{ role: 'system', content: systemPrompt }];
-    
     for (const h of history) messages.push({ role: h.role, content: h.content });
+    
     let finalMessage = message;
     if (searchResults?.length) {
       finalMessage += `\n\n[Hasil pencarian]:\n${searchResults.map(r => `- ${r.snippet}`).join('\n')}`;
     }
     messages.push({ role: 'user', content: finalMessage });
     
-    const isArticle = (level === 'sd_smp' || level === 'sma') && (
-      message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan') ||
-      message.toLowerCase().includes('buatkan') || message.toLowerCase().includes('tugas')
-    );
+    const isArticle = (level === 'sd_smp' || level === 'sma') && 
+      (message.toLowerCase().includes('artikel') || message.toLowerCase().includes('tulisan'));
     
     result = await callWithFallback(selectedModel, messages, level, isArticle);
     
     await saveChatMessage(userId, platform, 'user', message, selectedModel);
     await saveChatMessage(userId, platform, 'assistant', result.content, result.model);
-    
-    const actualCost = estimateCost(result.model, message.length / 4, result.content.length / 4);
-    await recordUsage(userId, result.model, actualCost);
     await setCache(cacheKey, result, 3600);
     
-    const duration = Date.now() - startTime;
-    logger.info(`✅ Completed in ${duration}ms`);
+    logger.info(`✅ Completed in ${Date.now() - startTime}ms`);
     return result;
   } catch (error) {
     logger.error('Process error:', error);
@@ -602,9 +500,7 @@ async function sendTelegramTyping(chatId) {
       chat_id: chatId,
       action: 'typing'
     });
-  } catch (err) {
-    console.log('[Telegram] Typing indicator error:', err.message);
-  }
+  } catch (err) {}
 }
 
 app.post('/webhook/telegram', async (req, res) => {
@@ -635,23 +531,15 @@ app.post('/webhook/telegram', async (req, res) => {
       if (level) {
         setUserLevel(userId, platform, level);
         setUserChosenLevel(userId, platform, true);
-        const priceMsg = CONFIG.levelPrices[level];
-        await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - Biaya ${priceMsg}\nSekarang kirim pertanyaan Anda!`);
+        await sendTelegramMessage(chatId, `✅ Level: ${CONFIG.levelNames[level]} - ${CONFIG.levelPrices[level]}\nSekarang kirim pertanyaan Anda!`);
         return;
       }
       
-      if (cmd === '/reset_level') {
-        setUserChosenLevel(userId, platform, false);
-        await sendTelegramMessage(chatId, '🔄 Level telah direset. Kirim /start untuk memilih level baru.');
-        return;
-      }
-      
-      await sendTelegramMessage(chatId, 'Perintah tidak dikenal. Gunakan /start untuk melihat daftar perintah.');
+      await sendTelegramMessage(chatId, 'Perintah tidak dikenal. Gunakan /start');
       return;
     }
     
-    const sudahPilihLevel = hasUserChosenLevel(userId, platform);
-    if (!sudahPilihLevel) {
+    if (!hasUserChosenLevel(userId, platform)) {
       await sendTelegramMessage(chatId, getLevelInfoText());
       return;
     }
@@ -683,9 +571,7 @@ app.get('/api/levels', (req, res) => {
 app.get('/api/level/status/:userId', (req, res) => {
   const { userId } = req.params;
   const { platform = 'website' } = req.query;
-  const hasChosen = hasUserChosenLevel(userId, platform);
-  const level = getUserLevel(userId, platform);
-  res.json({ userId, platform, hasChosen, level, levelInfo: CONFIG.levelNames[level] });
+  res.json({ userId, platform, hasChosen: hasUserChosenLevel(userId, platform), level: getUserLevel(userId, platform) });
 });
 
 app.post('/api/level', (req, res) => {
@@ -705,8 +591,7 @@ app.post('/api/chat', async (req, res) => {
   
   let userLevel = level;
   if (!userLevel) {
-    const hasChosen = hasUserChosenLevel(userId, platform);
-    if (!hasChosen) {
+    if (!hasUserChosenLevel(userId, platform)) {
       return res.status(400).json({ error: 'Belum pilih level', message: 'Silakan pilih level via POST /api/level' });
     }
     userLevel = getUserLevel(userId, platform);
@@ -729,10 +614,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const platform = 'whatsapp';
     
     let level = null;
-    if (message === '/level_sd' || message === '/levelsdsmp') level = 'sd_smp';
-    else if (message === '/level_sma' || message === '/levelsma') level = 'sma';
-    else if (message === '/level_mahasiswa' || message === '/levelmahasiswa') level = 'mahasiswa';
-    else if (message === '/level_dosen' || message === '/leveldosen') level = 'dosen_politikus';
+    if (message === '/level_sd') level = 'sd_smp';
+    else if (message === '/level_sma') level = 'sma';
+    else if (message === '/level_mahasiswa') level = 'mahasiswa';
+    else if (message === '/level_dosen') level = 'dosen_politikus';
     
     if (level) {
       setUserLevel(userId, platform, level);
@@ -741,8 +626,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
       return;
     }
     
-    const sudahPilihLevel = hasUserChosenLevel(userId, platform);
-    if (!sudahPilihLevel) {
+    if (!hasUserChosenLevel(userId, platform)) {
       console.log(`[WA] User ${from} belum pilih level`);
       return;
     }
@@ -768,15 +652,10 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// CLEANUP CRON
+// CLEANUP
 // ============================================
 cron.schedule('0 * * * *', async () => {
   logger.info('🧹 Running cleanup...');
-  if (supabase) {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    await supabase.from('logs').delete().lt('timestamp', thirtyDaysAgo.toISOString()).catch(e => {});
-  }
   const now = Date.now();
   for (const [key, value] of memoryCache) {
     if (value.expiry < now) memoryCache.delete(key);
@@ -788,7 +667,13 @@ cron.schedule('0 * * * *', async () => {
 // ============================================
 app.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                 🤖 YENNI - SAHABAT AI ANDA 🤖                                 ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  ✅ Server running on port ${PORT}                                               
+╔════════════════════════════════════════════════════════════════════╗
+║                 🤖 YENNI - SAHABAT AI ANDA 🤖                       ║
+╠════════════════════════════════════════════════════════════════════╣
+║  ✅ Server running on port ${PORT}                                      ║
+║  ✅ YENNI siap membantu! 🚀                                         ║
+╚════════════════════════════════════════════════════════════════════╝
+  `);
+});
+
+module.exports = app;
